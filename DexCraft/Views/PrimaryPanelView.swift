@@ -75,12 +75,20 @@ struct PrimaryPanelView: View {
     }
 
     private var targetPicker: some View {
-        Picker("Target Environment", selection: $viewModel.selectedTarget) {
-            ForEach(PromptTarget.allCases) { target in
-                Text(target.segmentTitle).tag(target)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Target Environment")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("Target Environment", selection: $viewModel.selectedTarget) {
+                ForEach(PromptTarget.allCases) { target in
+                    Text(target.rawValue).tag(target)
+                }
             }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .pickerStyle(.segmented)
     }
 
     private var roughInputEditor: some View {

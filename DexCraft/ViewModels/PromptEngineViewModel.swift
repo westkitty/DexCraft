@@ -123,8 +123,23 @@ final class PromptEngineViewModel: ObservableObject {
         templates = storageManager.loadTemplates()
         history = storageManager.loadHistory()
 
+        let defaultTemplates = PromptTemplate.defaultPresets()
         if templates.isEmpty {
-            templates = PromptTemplate.defaultPresets()
+            templates = defaultTemplates
+            storageManager.saveTemplates(templates)
+            return
+        }
+
+        var knownTemplateNames = Set(
+            templates.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        )
+        let missingDefaults = defaultTemplates.filter { preset in
+            let key = preset.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return knownTemplateNames.insert(key).inserted
+        }
+
+        if !missingDefaults.isEmpty {
+            templates.append(contentsOf: missingDefaults)
             storageManager.saveTemplates(templates)
         }
     }
