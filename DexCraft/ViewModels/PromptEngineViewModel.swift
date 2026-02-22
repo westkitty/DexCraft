@@ -624,9 +624,9 @@ final class PromptEngineViewModel: ObservableObject {
         switch target {
         case .claude:
             return """
-            <claude_prompt>
+            <dexcraft_claude_prompt>
             \(canonicalMarkdown)
-            </claude_prompt>
+            </dexcraft_claude_prompt>
             """
         case .geminiChatGPT:
             return canonicalMarkdown
@@ -642,6 +642,9 @@ final class PromptEngineViewModel: ObservableObject {
 
             #### Patch Plan
             - Describe deterministic edit steps in command execution order.
+
+            #### Execution Order
+            - Run preflight checks before edits, then build/validate after edits.
 
             #### Validation Commands
             - Provide build/test commands with expected outcomes.
