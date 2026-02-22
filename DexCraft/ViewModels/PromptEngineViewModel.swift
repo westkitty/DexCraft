@@ -144,7 +144,9 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         let hasAssumptions = !canonical.assumptions.isEmpty
-        let hasGoal = !canonical.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let goalText = canonical.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasGoal = !goalText.isEmpty
+        let hasSemanticGoal = hasGoal && !isLikelyHeadingToken(goalText)
         let hasContext = !canonical.context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasConstraints = !canonical.constraints.isEmpty
         let hasDeliverables = !canonical.deliverables.isEmpty
@@ -166,9 +168,17 @@ final class PromptEngineViewModel: ObservableObject {
                 return normalized.contains("cite primary sources") || normalized.contains("verify facts")
             })
 
+        let hasClaudeXMLTags = selectedTarget != .claude || hasClaudeRequiredTags(in: generatedPrompt)
+        let hasAgenticBuildRun = selectedTarget != .agenticIDE || generatedPrompt.contains(heading("Build/Run Commands"))
+        let hasAgenticGitRevert = selectedTarget != .agenticIDE || generatedPrompt.contains(heading("Git/Revert Plan"))
+        let sectionOrderValid = selectedTarget == .claude
+            ? hasClaudeTagOrder(in: generatedPrompt)
+            : hasRequiredSectionOrder(in: generatedPrompt)
+
         return [
             QualityCheck(title: "Assumptions Section Present", passed: hasAssumptions),
             QualityCheck(title: "Goal Section Present", passed: hasGoal),
+            QualityCheck(title: "Goal Content Valid", passed: hasSemanticGoal),
             QualityCheck(title: "Context Section Present", passed: hasContext),
             QualityCheck(title: "Constraints Section Present", passed: hasConstraints),
             QualityCheck(title: "Deliverables Section Present", passed: hasDeliverables),
@@ -178,7 +188,10 @@ final class PromptEngineViewModel: ObservableObject {
             QualityCheck(title: "No Duplicate Constraints", passed: noDuplicateConstraints),
             QualityCheck(title: "No Duplicate No-Filler Line", passed: noDuplicateNoFiller),
             QualityCheck(title: "Perplexity Verification Rules Applied", passed: hasPerplexitySearchRequirements),
-            QualityCheck(title: "Section Order Valid", passed: hasRequiredSectionOrder(in: generatedPrompt)),
+            QualityCheck(title: "Claude XML Tags Present", passed: hasClaudeXMLTags),
+            QualityCheck(title: "Agentic Build/Run Section Present", passed: hasAgenticBuildRun),
+            QualityCheck(title: "Agentic Git/Revert Section Present", passed: hasAgenticGitRevert),
+            QualityCheck(title: "Section Order Valid", passed: sectionOrderValid),
             QualityCheck(title: "Variables Filled", passed: variablesComplete)
         ]
     }
@@ -449,7 +462,6 @@ final class PromptEngineViewModel: ObservableObject {
             return fallbackParsedInput(from: input)
         }
 
-        let fallback = fallbackGoalAndContext(from: input)
         let leadingContext = normalizeBlock(preHeadingLines)
 
         let parsedGoal = normalizeBlock(sections[.goal] ?? [])
@@ -466,8 +478,8 @@ final class PromptEngineViewModel: ObservableObject {
         return ParsedPromptInput(
             assumptions: parseListLines(from: sections[.assumptions]),
             fileTreeRequest: parseListLines(from: sections[.fileTreeRequest]),
-            goal: parsedGoal.isEmpty ? fallback.goal : parsedGoal,
-            context: parsedContext.isEmpty ? fallback.context : parsedContext,
+            goal: parsedGoal,
+            context: parsedContext,
             constraints: parseListLines(from: sections[.constraints]),
             deliverables: parseListLines(from: sections[.deliverables]),
             implementationDetails: parseListLines(from: sections[.implementationDetails]),
@@ -600,9 +612,10 @@ final class PromptEngineViewModel: ObservableObject {
             )
             : []
 
-        let goal = parsed.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let normalizedGoal = parsed.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let goal = normalizedGoal.isEmpty || isLikelyHeadingToken(normalizedGoal)
             ? "Define and complete the requested task precisely."
-            : parsed.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+            : normalizedGoal
 
         let context = parsed.context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "No additional context provided."
@@ -629,11 +642,7 @@ final class PromptEngineViewModel: ObservableObject {
 
         switch target {
         case .claude:
-            return """
-            <dexcraft_claude_prompt>
-            \(canonicalMarkdown)
-            </dexcraft_claude_prompt>
-            """
+            return renderClaudePrompt(from: canonical)
         case .geminiChatGPT:
             return canonicalMarkdown
         case .perplexity:
@@ -651,6 +660,14 @@ final class PromptEngineViewModel: ObservableObject {
 
             #### Execution Order
             - Run preflight checks before edits, then build/validate after edits.
+
+            ### Build/Run Commands
+            - List commands in execution order.
+            - Use reproducible commands and avoid destructive git operations unless explicitly approved.
+
+            ### Git/Revert Plan
+            - Describe commit strategy and rollback path.
+            - Do not rewrite history unless asked.
 
             #### Validation Commands
             - Provide build/test commands with expected outcomes.
@@ -739,6 +756,29 @@ final class PromptEngineViewModel: ObservableObject {
         var searchRange = prompt.startIndex..<prompt.endIndex
         for requiredHeading in headings {
             guard let range = prompt.range(of: requiredHeading, options: [], range: searchRange) else {
+                return false
+            }
+            searchRange = range.upperBound..<prompt.endIndex
+        }
+
+        return true
+    }
+
+    private func hasClaudeRequiredTags(in prompt: String) -> Bool {
+        [
+            "<objective>", "</objective>",
+            "<context>", "</context>",
+            "<constraints>", "</constraints>",
+            "<deliverables>", "</deliverables>"
+        ].allSatisfy(prompt.contains)
+    }
+
+    private func hasClaudeTagOrder(in prompt: String) -> Bool {
+        let tags = ["<objective>", "<context>", "<constraints>", "<deliverables>"]
+        var searchRange = prompt.startIndex..<prompt.endIndex
+
+        for tag in tags {
+            guard let range = prompt.range(of: tag, options: [], range: searchRange) else {
                 return false
             }
             searchRange = range.upperBound..<prompt.endIndex
@@ -964,6 +1004,70 @@ final class PromptEngineViewModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    }
+
+    private func isLikelyHeadingToken(_ value: String) -> Bool {
+        value.range(of: #"^#{1,6}\s+\S+"#, options: .regularExpression) != nil
+    }
+
+    private func renderClaudePrompt(from canonical: CanonicalPrompt) -> String {
+        """
+        <objective>
+        \(canonical.goal)
+        </objective>
+
+        <context>
+        \(renderClaudeContextBlock(from: canonical))
+        </context>
+
+        <constraints>
+        \(bulletize(canonical.constraints))
+        </constraints>
+
+        <deliverables>
+        \(renderClaudeDeliverablesBlock(from: canonical))
+        </deliverables>
+        """
+    }
+
+    private func renderClaudeContextBlock(from canonical: CanonicalPrompt) -> String {
+        var blocks: [String] = []
+        blocks.append("Assumptions:\n\(bulletize(canonical.assumptions))")
+
+        if options.addFileTreeRequest {
+            blocks.append("File Tree Request (Before Implementation Details):\n\(bulletize(canonical.fileTreeRequest))")
+        }
+
+        blocks.append("Context:\n\(canonical.context)")
+        return blocks.joined(separator: "\n\n")
+    }
+
+    private func renderClaudeDeliverablesBlock(from canonical: CanonicalPrompt) -> String {
+        var blocks: [String] = []
+        blocks.append("Deliverables:\n\(bulletize(canonical.deliverables))")
+        blocks.append("Implementation Details:\n\(bulletize(canonical.implementationDetails))")
+
+        if options.includeVerificationChecklist {
+            blocks.append("Verification Checklist (Pass/Fail):\n\(checkboxize(canonical.verificationChecklist))")
+        }
+
+        if options.includeRisksAndEdgeCases {
+            blocks.append("Risks / Edge Cases:\n\(bulletize(canonical.risksAndEdgeCases))")
+        }
+
+        if options.includeAlternatives {
+            blocks.append("Alternatives:\n\(bulletize(canonical.alternatives))")
+        }
+
+        if options.includeValidationSteps {
+            blocks.append("Validation Steps:\n\(bulletize(canonical.validationSteps))")
+        }
+
+        if options.includeRevertPlan {
+            blocks.append("Revert Plan:\n\(bulletize(canonical.revertPlan))")
+        }
+
+        return blocks.joined(separator: "\n\n")
     }
 
     private func section(title: String, body: String) -> String {
