@@ -85,8 +85,17 @@ struct PrimaryPanelView: View {
 
     private var roughInputEditor: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Rough Input")
-                .font(.headline)
+            HStack {
+                Text("Rough Input")
+                    .font(.headline)
+                Spacer()
+                Button("Clear") {
+                    viewModel.roughInput = ""
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(viewModel.roughInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 12)
