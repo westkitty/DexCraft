@@ -1,0 +1,329 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1B2C3D4E5F6012345675001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671001 /* AppDelegate.swift */; };
+		A1B2C3D4E5F6012345675002 /* DexCraftApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671002 /* DexCraftApp.swift */; };
+		A1B2C3D4E5F6012345675003 /* EnhancementOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671010 /* EnhancementOptions.swift */; };
+		A1B2C3D4E5F6012345675004 /* PromptHistoryEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671011 /* PromptHistoryEntry.swift */; };
+		A1B2C3D4E5F6012345675005 /* PromptTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671012 /* PromptTarget.swift */; };
+		A1B2C3D4E5F6012345675006 /* PromptTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671013 /* PromptTemplate.swift */; };
+		A1B2C3D4E5F6012345675007 /* QualityCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671014 /* QualityCheck.swift */; };
+		A1B2C3D4E5F6012345675008 /* WorkbenchTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */; };
+		A1B2C3D4E5F6012345675009 /* StorageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671020 /* StorageManager.swift */; };
+		A1B2C3D4E5F601234567500A /* PromptEngineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */; };
+		A1B2C3D4E5F601234567500B /* PrimaryPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */; };
+		A1B2C3D4E5F601234567500C /* ResultPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671041 /* ResultPanelView.swift */; };
+		A1B2C3D4E5F601234567500D /* RootPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671042 /* RootPopoverView.swift */; };
+		A1B2C3D4E5F601234567500E /* TransparentTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671043 /* TransparentTextEditor.swift */; };
+		A1B2C3D4E5F601234567500F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671050 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1B2C3D4E5F6012345671001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671002 /* DexCraftApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DexCraftApp.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671010 /* EnhancementOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnhancementOptions.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671011 /* PromptHistoryEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptHistoryEntry.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671012 /* PromptTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTarget.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671013 /* PromptTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplate.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671014 /* QualityCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QualityCheck.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchTab.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671020 /* StorageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManager.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEngineViewModel.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryPanelView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671041 /* ResultPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultPanelView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671042 /* RootPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootPopoverView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671043 /* TransparentTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransparentTextEditor.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671050 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1B2C3D4E5F60123456710FF /* DexCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DexCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1B2C3D4E5F6012345672002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1B2C3D4E5F6012345678902 = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345678904 /* DexCraft */,
+				A1B2C3D4E5F6012345678903 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678903 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F60123456710FF /* DexCraft.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678904 /* DexCraft */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671001 /* AppDelegate.swift */,
+				A1B2C3D4E5F6012345671002 /* DexCraftApp.swift */,
+				A1B2C3D4E5F6012345671003 /* Info.plist */,
+				A1B2C3D4E5F6012345678905 /* Models */,
+				A1B2C3D4E5F6012345678906 /* Services */,
+				A1B2C3D4E5F6012345678907 /* ViewModels */,
+				A1B2C3D4E5F6012345678908 /* Views */,
+				A1B2C3D4E5F6012345678909 /* Resources */,
+			);
+			path = DexCraft;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678905 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671010 /* EnhancementOptions.swift */,
+				A1B2C3D4E5F6012345671011 /* PromptHistoryEntry.swift */,
+				A1B2C3D4E5F6012345671012 /* PromptTarget.swift */,
+				A1B2C3D4E5F6012345671013 /* PromptTemplate.swift */,
+				A1B2C3D4E5F6012345671014 /* QualityCheck.swift */,
+				A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678906 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671020 /* StorageManager.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678907 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678908 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */,
+				A1B2C3D4E5F6012345671041 /* ResultPanelView.swift */,
+				A1B2C3D4E5F6012345671042 /* RootPopoverView.swift */,
+				A1B2C3D4E5F6012345671043 /* TransparentTextEditor.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678909 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671050 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1B2C3D4E5F6012345673001 /* DexCraft */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1B2C3D4E5F6012345674002 /* Build configuration list for PBXNativeTarget "DexCraft" */;
+			buildPhases = (
+				A1B2C3D4E5F6012345672001 /* Sources */,
+				A1B2C3D4E5F6012345672002 /* Frameworks */,
+				A1B2C3D4E5F6012345672003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DexCraft;
+			productName = DexCraft;
+			productReference = A1B2C3D4E5F60123456710FF /* DexCraft.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1B2C3D4E5F6012345678901 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					A1B2C3D4E5F6012345673001 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+				};
+			};
+			buildConfigurationList = A1B2C3D4E5F6012345674001 /* Build configuration list for PBXProject "DexCraft" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1B2C3D4E5F6012345678902;
+			productRefGroup = A1B2C3D4E5F6012345678903 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1B2C3D4E5F6012345673001 /* DexCraft */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1B2C3D4E5F6012345672003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1B2C3D4E5F601234567500F /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1B2C3D4E5F6012345672001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1B2C3D4E5F6012345675001 /* AppDelegate.swift in Sources */,
+				A1B2C3D4E5F6012345675002 /* DexCraftApp.swift in Sources */,
+				A1B2C3D4E5F6012345675003 /* EnhancementOptions.swift in Sources */,
+				A1B2C3D4E5F6012345675004 /* PromptHistoryEntry.swift in Sources */,
+				A1B2C3D4E5F6012345675005 /* PromptTarget.swift in Sources */,
+				A1B2C3D4E5F6012345675006 /* PromptTemplate.swift in Sources */,
+				A1B2C3D4E5F6012345675007 /* QualityCheck.swift in Sources */,
+				A1B2C3D4E5F6012345675008 /* WorkbenchTab.swift in Sources */,
+				A1B2C3D4E5F6012345675009 /* StorageManager.swift in Sources */,
+				A1B2C3D4E5F601234567500A /* PromptEngineViewModel.swift in Sources */,
+				A1B2C3D4E5F601234567500B /* PrimaryPanelView.swift in Sources */,
+				A1B2C3D4E5F601234567500C /* ResultPanelView.swift in Sources */,
+				A1B2C3D4E5F601234567500D /* RootPopoverView.swift in Sources */,
+				A1B2C3D4E5F601234567500E /* TransparentTextEditor.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1B2C3D4E5F6012345674101 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1B2C3D4E5F6012345674102 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A1B2C3D4E5F6012345674201 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DexCraft/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.andrew.dexcraft;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1B2C3D4E5F6012345674202 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DexCraft/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.andrew.dexcraft;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1B2C3D4E5F6012345674001 /* Build configuration list for PBXProject "DexCraft" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1B2C3D4E5F6012345674101 /* Debug */,
+				A1B2C3D4E5F6012345674102 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1B2C3D4E5F6012345674002 /* Build configuration list for PBXNativeTarget "DexCraft" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1B2C3D4E5F6012345674201 /* Debug */,
+				A1B2C3D4E5F6012345674202 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A1B2C3D4E5F6012345678901 /* Project object */;
+}
