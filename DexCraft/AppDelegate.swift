@@ -1,12 +1,15 @@
 import AppKit
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let collapsedSize = NSSize(width: 450, height: 640)
     private let expandedSize = NSSize(width: 900, height: 640)
 
     private var statusItem: NSStatusItem!
+    private var statusMenu: NSMenu!
+    private var toggleDrawerMenuItem: NSMenuItem!
     private var popover: NSPopover!
+    private var detachedWindow: NSPanel?
     private var globalMonitor: Any?
     private var localMonitor: Any?
 
@@ -14,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let vm = PromptEngineViewModel()
         vm.onRevealStateChanged = { [weak self] expanded in
             self?.resizePopover(expanded: expanded, animated: true)
+        }
+        vm.onDetachedWindowToggleRequested = { [weak self] in
+            self?.toggleDetachedWindow()
         }
         return vm
     }()
@@ -57,8 +63,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             button.image = nil
         }
-        button.action = #selector(togglePopover(_:))
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        button.action = #selector(handleStatusItemClick(_:))
         button.target = self
+
+        setupStatusMenu()
+    }
+
+    private func setupStatusMenu() {
+        let menu = NSMenu()
+
+        toggleDrawerMenuItem = NSMenuItem(title: "Open Drawer", action: #selector(togglePopover(_:)), keyEquivalent: "")
+        toggleDrawerMenuItem.target = self
+        menu.addItem(toggleDrawerMenuItem)
+
+        let quitItem = NSMenuItem(title: "Quit DexCraft", action: #selector(quitApp(_:)), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(.separator())
+        menu.addItem(quitItem)
+
+        statusMenu = menu
+    }
+
+    @objc private func handleStatusItemClick(_ sender: Any?) {
+        guard let event = NSApp.currentEvent else {
+            togglePopover(sender)
+            return
+        }
+
+        if event.type == .rightMouseUp {
+            toggleDrawerMenuItem.title = popover.isShown ? "Close Drawer" : "Open Drawer"
+            statusItem.menu = statusMenu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else {
+            togglePopover(sender)
+        }
+    }
+
+    @objc private func quitApp(_ sender: Any?) {
+        NSApp.terminate(sender)
     }
 
     private func setupKeyboardShortcut() {
@@ -88,6 +132,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePopover(_ sender: Any?) {
+        if viewModel.isDetachedWindowActive {
+            detachedWindow?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
         guard let button = statusItem.button else { return }
 
         if popover.isShown {
@@ -98,6 +148,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.contentViewController?.view.window?.becomeKey()
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    private func toggleDetachedWindow() {
+        if detachedWindow == nil {
+            openDetachedWindow()
+        } else {
+            closeDetachedWindow(showPopoverAfterClose: true)
+        }
+    }
+
+    private func openDetachedWindow() {
+        if popover.isShown {
+            popover.performClose(nil)
+        }
+
+        let width = viewModel.isResultPanelVisible ? expandedSize.width : collapsedSize.width
+        let rect = NSRect(x: 0, y: 0, width: width, height: collapsedSize.height)
+        let panel = NSPanel(
+            contentRect: rect,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.title = "DexCraft"
+        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+        panel.minSize = NSSize(width: collapsedSize.width, height: 480)
+        panel.delegate = self
+        panel.isReleasedWhenClosed = false
+        panel.contentViewController = NSHostingController(
+            rootView: RootPopoverView(viewModel: viewModel).preferredColorScheme(.dark)
+        )
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        detachedWindow = panel
+        viewModel.setDetachedWindowActive(true)
+    }
+
+    private func closeDetachedWindow(showPopoverAfterClose: Bool) {
+        guard let window = detachedWindow else { return }
+        window.close()
+
+        if showPopoverAfterClose, let button = statusItem.button {
+            resizePopover(expanded: viewModel.isResultPanelVisible, animated: false)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.becomeKey()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow,
+              closingWindow == detachedWindow
+        else {
+            return
+        }
+
+        detachedWindow = nil
+        viewModel.setDetachedWindowActive(false)
     }
 
     private func resizePopover(expanded: Bool, animated: Bool) {

@@ -22,6 +22,18 @@ struct PrimaryPanelView: View {
                 Text("DexCraft")
                     .font(.title3.weight(.semibold))
                 Spacer()
+
+                Button {
+                    viewModel.requestDetachedWindowToggle()
+                } label: {
+                    Label(
+                        viewModel.isDetachedWindowActive ? "Attach" : "Pop Out",
+                        systemImage: viewModel.isDetachedWindowActive ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+                    )
+                    .font(.caption)
+                }
+                .buttonStyle(.bordered)
+
                 Text("Offline")
                     .font(.caption)
                     .padding(.horizontal, 8)

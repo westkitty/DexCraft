@@ -56,11 +56,13 @@ final class PromptEngineViewModel: ObservableObject {
     @Published var statusMessage: String = ""
     @Published var templateNameDraft: String = ""
     @Published var preferredIDEExportFormat: IDEExportFormat = .cursorRules
+    @Published private(set) var isDetachedWindowActive: Bool = false
 
     @Published private(set) var templates: [PromptTemplate] = []
     @Published private(set) var history: [PromptHistoryEntry] = []
 
     var onRevealStateChanged: ((Bool) -> Void)?
+    var onDetachedWindowToggleRequested: (() -> Void)?
 
     private let storageManager: StorageManager
     private let variableRegex = try? NSRegularExpression(pattern: #"\{([a-zA-Z0-9_\-]+)\}"#)
@@ -245,6 +247,14 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    func requestDetachedWindowToggle() {
+        onDetachedWindowToggleRequested?()
+    }
+
+    func setDetachedWindowActive(_ active: Bool) {
+        isDetachedWindowActive = active
     }
 
     private func syncVariables() {
