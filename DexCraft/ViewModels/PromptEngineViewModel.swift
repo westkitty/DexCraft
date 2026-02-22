@@ -234,6 +234,12 @@ final class PromptEngineViewModel: ObservableObject {
             return
         }
 
+        if options.addFileTreeRequest,
+           !generatedPrompt.contains(heading("File Tree Request (Before Implementation Details)")) {
+            statusMessage = "Export blocked: File Tree Request section is missing."
+            return
+        }
+
         let panel = NSSavePanel()
         panel.nameFieldStringValue = format.filename
         panel.canCreateDirectories = true
