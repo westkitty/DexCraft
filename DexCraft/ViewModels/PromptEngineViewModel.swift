@@ -86,7 +86,14 @@ final class PromptEngineViewModel: ObservableObject {
     private let storageManager: StorageManager
     private let promptLibraryRepository: PromptLibraryRepository
     private let offlinePromptOptimizer = OfflinePromptOptimizer()
-    private let variableRegex = try? NSRegularExpression(pattern: #"\{([A-Za-z_][A-Za-z0-9_]*)\}"#)
+    private let variableRegex: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(pattern: #"\{([a-zA-Z0-9_\-]+)\}"#)
+        } catch {
+            NSLog("DexCraft: variable regex compilation failed: \(error.localizedDescription)")
+            return try! NSRegularExpression(pattern: "(?!)") // matches nothing
+        }
+    }()
 
     private let noFillerConstraint = "Respond only with the requested output. Do not apologize or use conversational filler."
     private let markdownConstraint = "Use strict markdown structure and headings exactly as specified."
@@ -283,7 +290,7 @@ final class PromptEngineViewModel: ObservableObject {
 
         let parsed = parseInputSections(from: resolvedInput)
         let canonical = buildCanonicalPrompt(from: parsed, target: selectedTarget)
-        let basePrompt = renderPrompt(target: selectedTarget, canonical: canonical)
+        let basePrompt = buildPrompt(from: resolvedInput)
 
         if autoOptimizePrompt {
             let output = offlinePromptOptimizer.optimize(
@@ -611,12 +618,6 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     private func syncVariables() {
-        guard let variableRegex else {
-            detectedVariables = []
-            variableValues = [:]
-            return
-        }
-
         let nsRange = NSRange(roughInput.startIndex..<roughInput.endIndex, in: roughInput)
         let matches = variableRegex.matches(in: roughInput, options: [], range: nsRange)
 
@@ -626,9 +627,7 @@ final class PromptEngineViewModel: ObservableObject {
         for match in matches {
             guard match.numberOfRanges > 1,
                   let range = Range(match.range(at: 1), in: roughInput)
-            else {
-                continue
-            }
+            else { continue }
 
             let variable = String(roughInput[range])
             if seen.insert(variable).inserted {
@@ -655,6 +654,273 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         return output
+    }
+
+    private struct PromptSections {
+        var goal: String
+        var context: String
+        var constraints: [String]
+        var deliverables: [String]
+    }
+
+    private enum SectionKind {
+        case goal
+        case context
+        case constraints
+        case deliverables
+    }
+
+    private func buildPrompt(from input: String) -> String {
+        let sections = parseSections(from: input)
+
+        let baseConstraints = buildConstraintLines(target: selectedTarget)
+        let baseDeliverables = buildDeliverablesLines(target: selectedTarget)
+
+        let constraints = dedupePreservingOrder(sections.constraints + baseConstraints)
+        let deliverables = dedupePreservingOrder(sections.deliverables + baseDeliverables)
+
+        switch selectedTarget {
+        case .claude:
+            return buildClaudePrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
+        case .agenticIDE:
+            return buildAgenticIDEPrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
+        case .perplexity:
+            return buildPerplexityPrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
+        case .geminiChatGPT:
+            return buildGeminiChatGPTPrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
+        }
+    }
+
+    private func parseSections(from input: String) -> PromptSections {
+        let normalized = input
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        let lines = normalized
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+
+        var currentSection: SectionKind?
+        var goalLines: [String] = []
+        var contextLines: [String] = []
+        var constraintLines: [String] = []
+        var deliverableLines: [String] = []
+        var unsectioned: [String] = []
+
+        for rawLine in lines {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            if let (section, inline) = detectSectionHeader(in: trimmed) {
+                currentSection = section
+                if let inline, !inline.isEmpty {
+                    appendLine(inline, to: section, goal: &goalLines, context: &contextLines, constraints: &constraintLines, deliverables: &deliverableLines)
+                }
+                continue
+            }
+
+            if let currentSection {
+                appendLine(trimmed, to: currentSection, goal: &goalLines, context: &contextLines, constraints: &constraintLines, deliverables: &deliverableLines)
+            } else {
+                unsectioned.append(trimmed)
+            }
+        }
+
+        var goal = goalLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        var context = contextLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // IMPORTANT: NEVER set context to the entire input as a fallback.
+        // If no explicit sections exist: first line = goal, remainder = context.
+        if goal.isEmpty, let first = unsectioned.first {
+            goal = first
+            context = unsectioned.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if goal.isEmpty {
+            goal = "Define and complete the requested task precisely."
+        }
+
+        return PromptSections(
+            goal: goal,
+            context: context,
+            constraints: normalizeBullets(constraintLines),
+            deliverables: normalizeBullets(deliverableLines)
+        )
+    }
+
+    private func detectSectionHeader(in line: String) -> (SectionKind, String?)? {
+        var candidate = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        while candidate.hasPrefix("#") { candidate.removeFirst() }
+        candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let (header, inline) = splitHeader(candidate)
+        let key = header.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return nil }
+
+        let goalKeys: Set<String> = ["goal", "objective", "task", "mission", "request"]
+        let contextKeys: Set<String> = ["context", "background", "notes", "details"]
+        let constraintKeys: Set<String> = ["constraints", "constraint", "rules", "requirements", "guardrails"]
+        let deliverableKeys: Set<String> = ["deliverables", "deliverable", "outputs", "output", "results", "return", "returns"]
+
+        if goalKeys.contains(key) { return (.goal, inline) }
+        if contextKeys.contains(key) { return (.context, inline) }
+        if constraintKeys.contains(key) { return (.constraints, inline) }
+        if deliverableKeys.contains(key) { return (.deliverables, inline) }
+
+        return nil
+    }
+
+    private func splitHeader(_ line: String) -> (String, String?) {
+        if let colonIndex = line.firstIndex(of: ":") {
+            let header = String(line[..<colonIndex])
+            let remainder = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (header, remainder.isEmpty ? nil : remainder)
+        }
+        if let range = line.range(of: " - ") {
+            let header = String(line[..<range.lowerBound])
+            let remainder = String(line[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (header, remainder.isEmpty ? nil : remainder)
+        }
+        return (line, nil)
+    }
+
+    private func appendLine(
+        _ line: String,
+        to section: SectionKind,
+        goal: inout [String],
+        context: inout [String],
+        constraints: inout [String],
+        deliverables: inout [String]
+    ) {
+        switch section {
+        case .goal: goal.append(line)
+        case .context: context.append(line)
+        case .constraints: constraints.append(line)
+        case .deliverables: deliverables.append(line)
+        }
+    }
+
+    private func normalizeBullets(_ lines: [String]) -> [String] {
+        var output: [String] = []
+        for rawLine in lines {
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            for prefix in ["- ", "* ", "• ", "– ", "— "] {
+                if line.hasPrefix(prefix) { line.removeFirst(prefix.count); break }
+            }
+
+            if let first = line.first, first.isNumber {
+                var index = line.startIndex
+                while index < line.endIndex, line[index].isNumber { index = line.index(after: index) }
+                if index < line.endIndex {
+                    let delim = line[index]
+                    if delim == "." || delim == ")" {
+                        index = line.index(after: index)
+                        if index < line.endIndex, line[index] == " " { index = line.index(after: index) }
+                        line = String(line[index...])
+                    }
+                }
+            }
+
+            line = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !line.isEmpty { output.append(line) }
+        }
+        return dedupePreservingOrder(output)
+    }
+
+    private func dedupePreservingOrder(_ lines: [String]) -> [String] {
+        var seen = Set<String>()
+        var output: [String] = []
+        for line in lines {
+            let key = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { continue }
+            if seen.insert(key).inserted { output.append(key) }
+        }
+        return output
+    }
+
+    private func buildConstraintLines(target: PromptTarget) -> [String] {
+        dedupePreservingOrder(optionConstraintLines() + targetConstraintLines(for: target))
+    }
+
+    private func buildDeliverablesLines(target: PromptTarget) -> [String] {
+        switch target {
+        case .claude, .geminiChatGPT, .perplexity, .agenticIDE:
+            return [
+                "Complete every requested deliverable with concrete output.",
+                "Call out assumptions before implementation details."
+            ]
+        }
+    }
+
+    private func buildClaudePrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
+        """
+        <objective>
+        \(goal)
+        </objective>
+
+        <context>
+        \(context.isEmpty ? "No additional context provided." : context)
+        </context>
+
+        <constraints>
+        \(bulletize(constraints))
+        </constraints>
+
+        <deliverables>
+        \(bulletize(deliverables))
+        </deliverables>
+        """
+    }
+
+    private func buildAgenticIDEPrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
+        """
+        ### Goal
+        \(goal)
+
+        ### Context
+        \(context.isEmpty ? "No additional context provided." : context)
+
+        ### Constraints
+        \(bulletize(constraints))
+
+        ### Deliverables
+        \(bulletize(deliverables))
+        """
+    }
+
+    private func buildPerplexityPrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
+        """
+        ### Goal
+        \(goal)
+
+        ### Context
+        \(context.isEmpty ? "No additional context provided." : context)
+
+        ### Constraints
+        \(bulletize(constraints))
+
+        ### Deliverables
+        \(bulletize(deliverables))
+        """
+    }
+
+    private func buildGeminiChatGPTPrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
+        """
+        ### Goal
+        \(goal)
+
+        ### Context
+        \(context.isEmpty ? "No additional context provided." : context)
+
+        ### Constraints
+        \(bulletize(constraints))
+
+        ### Deliverables
+        \(bulletize(deliverables))
+        """
     }
 
     private func parseInputSections(from input: String) -> ParsedPromptInput {
