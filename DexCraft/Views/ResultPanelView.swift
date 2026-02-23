@@ -15,12 +15,6 @@ struct ResultPanelView: View {
                 .buttonStyle(.bordered)
             }
 
-            qualityGate
-            optimizationSummary
-
-            Toggle("Show Diff View", isOn: $viewModel.showDiff)
-                .toggleStyle(.switch)
-
             Group {
                 if viewModel.showDiff {
                     ScrollView {
@@ -40,8 +34,19 @@ struct ResultPanelView: View {
                     }
                 }
             }
-            .background(Color.black.opacity(0.22))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.30)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.015))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    )
+            )
 
             HStack(spacing: 8) {
                 Button("Copy to Clipboard") {
@@ -49,13 +54,17 @@ struct ResultPanelView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                Button("Export .md") {
-                    viewModel.exportOptimizedPromptAsMarkdown()
-                }
-                .buttonStyle(.bordered)
+                Menu("Export") {
+                    Button("Markdown (.md)") {
+                        viewModel.exportOptimizedPromptAsMarkdown()
+                    }
 
-                if viewModel.selectedTarget == .agenticIDE {
-                    Menu("IDE Export") {
+                    if viewModel.selectedTarget == .agenticIDE {
+                        Divider()
+                        Button(viewModel.preferredIDEExportFormat.displayName) {
+                            viewModel.exportForIDE(viewModel.preferredIDEExportFormat)
+                        }
+                        Divider()
                         Button("Export .cursorrules") {
                             viewModel.exportForIDE(.cursorRules)
                         }
@@ -64,8 +73,15 @@ struct ResultPanelView: View {
                             viewModel.exportForIDE(.copilotInstructions)
                         }
                     }
-                    .menuStyle(.borderlessButton)
                 }
+                .menuStyle(.borderlessButton)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Show Diff View", isOn: $viewModel.showDiff)
+                    .toggleStyle(.switch)
+                qualityGate
+                optimizationSummary
             }
 
             if !viewModel.statusMessage.isEmpty {
@@ -93,8 +109,19 @@ struct ResultPanelView: View {
             }
         }
         .padding(10)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .opacity(0.30)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.015))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                )
+        )
     }
 
     private var optimizationSummary: some View {
@@ -132,7 +159,18 @@ struct ResultPanelView: View {
             }
         }
         .padding(10)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .opacity(0.30)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.015))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                )
+        )
     }
 }

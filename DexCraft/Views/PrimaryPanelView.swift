@@ -5,6 +5,7 @@ struct PrimaryPanelView: View {
 
     @State private var isTemplateManagerPresented = false
     @State private var isHistoryManagerPresented = false
+    @State private var isStructuredDraftExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -129,22 +130,6 @@ struct PrimaryPanelView: View {
                     .glassInset(cornerRadius: 8)
                 }
 
-                HStack(spacing: 8) {
-                    Text("Output style: \(viewModel.selectedTarget.segmentTitle)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer()
-                    Menu("Change") {
-                        ForEach(PromptTarget.allCases) { target in
-                            Button(target.rawValue) {
-                                viewModel.selectedTarget = target
-                            }
-                        }
-                    }
-                }
-                .padding(8)
-                .glassInset(cornerRadius: 8)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Target Environment")
@@ -183,14 +168,15 @@ struct PrimaryPanelView: View {
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.thinMaterial)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.30)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white.opacity(0.04))
+                            .fill(Color.white.opacity(0.02))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
                     )
 
                 TransparentTextEditor(text: $viewModel.roughInput)
@@ -213,82 +199,88 @@ struct PrimaryPanelView: View {
 
     private var structuredEditorPreview: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Structured Draft + Live Preview")
-                .font(.headline)
-
-            Group {
-                Text("Goal")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $viewModel.draftGoal)
-                    .font(.system(size: 12))
-                    .frame(height: 44)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .glassInset(cornerRadius: 8)
-            }
-
-            Group {
-                Text("Context")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $viewModel.draftContext)
-                    .font(.system(size: 12))
-                    .frame(height: 56)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .glassInset(cornerRadius: 8)
-            }
-
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Constraints (one per line)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    TextEditor(text: $viewModel.draftConstraintsText)
-                        .font(.system(size: 12))
-                        .frame(height: 66)
-                        .scrollContentBackground(.hidden)
-                        .padding(6)
-                        .glassInset(cornerRadius: 8)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Deliverables (one per line)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    TextEditor(text: $viewModel.draftDeliverablesText)
-                        .font(.system(size: 12))
-                        .frame(height: 66)
-                        .scrollContentBackground(.hidden)
-                        .padding(6)
-                        .glassInset(cornerRadius: 8)
-                }
-            }
-
-            HStack {
-                Text("Preview Format")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Picker("Preview Format", selection: $viewModel.structuredPreviewFormat) {
-                    ForEach(Format.allCases) { format in
-                        Text(format.rawValue).tag(format)
+            DisclosureGroup(isExpanded: $isStructuredDraftExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Group {
+                        Text("Goal")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $viewModel.draftGoal)
+                            .font(.system(size: 12))
+                            .frame(height: 44)
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .glassInset(cornerRadius: 8)
                     }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-            }
 
-            ScrollView {
-                Text(viewModel.structuredPreview)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(10)
+                    Group {
+                        Text("Context")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $viewModel.draftContext)
+                            .font(.system(size: 12))
+                            .frame(height: 56)
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .glassInset(cornerRadius: 8)
+                    }
+
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Constraints (one per line)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TextEditor(text: $viewModel.draftConstraintsText)
+                                .font(.system(size: 12))
+                                .frame(height: 66)
+                                .scrollContentBackground(.hidden)
+                                .padding(6)
+                                .glassInset(cornerRadius: 8)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Deliverables (one per line)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TextEditor(text: $viewModel.draftDeliverablesText)
+                                .font(.system(size: 12))
+                                .frame(height: 66)
+                                .scrollContentBackground(.hidden)
+                                .padding(6)
+                                .glassInset(cornerRadius: 8)
+                        }
+                    }
+
+                    HStack {
+                        Text("Preview Format")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Picker("Preview Format", selection: $viewModel.structuredPreviewFormat) {
+                            ForEach(Format.allCases) { format in
+                                Text(format.rawValue).tag(format)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+
+                    ScrollView {
+                        Text(viewModel.structuredPreview)
+                            .font(.system(size: 12, weight: .regular, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(10)
+                    }
+                    .frame(height: 170)
+                    .glassInset(cornerRadius: 10)
+                }
+                .padding(.top, 6)
+            } label: {
+                Text("Structured Draft + Live Preview")
+                    .font(.headline)
             }
-            .frame(height: 170)
-            .glassInset(cornerRadius: 10)
+            .animation(.easeInOut(duration: 0.18), value: isStructuredDraftExpanded)
         }
         .padding(10)
         .glassCard()
@@ -441,16 +433,26 @@ struct PrimaryPanelView: View {
 
     private var settingsTab: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("IDE Export Default")
+            Text("Export Defaults")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Picker("IDE Export", selection: $viewModel.preferredIDEExportFormat) {
-                ForEach(PromptEngineViewModel.IDEExportFormat.allCases) { format in
-                    Text(format.displayName).tag(format)
+            HStack(spacing: 8) {
+                Text("IDE format")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("IDE Export", selection: $viewModel.preferredIDEExportFormat) {
+                    ForEach(PromptEngineViewModel.IDEExportFormat.allCases) { format in
+                        Text(format.displayName).tag(format)
+                    }
                 }
+                .pickerStyle(.menu)
+                .labelsHidden()
             }
-            .pickerStyle(.segmented)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .glassInset(cornerRadius: 8)
 
             Text("All processing is local and deterministic. No network calls are made.")
                 .font(.caption2)
@@ -856,13 +858,14 @@ private struct GlassCardModifier: ViewModifier {
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
+                    .opacity(0.30)
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(Color.white.opacity(0.02))
+                            .fill(Color.white.opacity(0.015))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
                     )
             )
     }
@@ -877,13 +880,14 @@ private extension View {
         background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(.thinMaterial)
+                .opacity(0.30)
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color.white.opacity(0.03))
+                        .fill(Color.white.opacity(0.02))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
                 )
         )
     }

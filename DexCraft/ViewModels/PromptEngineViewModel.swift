@@ -40,7 +40,7 @@ final class PromptEngineViewModel: ObservableObject {
 
     @Published var selectedTarget: PromptTarget = .claude
     @Published var selectedModelFamily: ModelFamily = .openAIGPTStyle
-    @Published var selectedScenarioProfile: ScenarioProfile = .ideCodingAssistant
+    @Published var selectedScenarioProfile: ScenarioProfile = .generalAssistant
     @Published var autoOptimizePrompt: Bool = true
     @Published var roughInput: String = "" {
         didSet { syncVariables() }

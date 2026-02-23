@@ -106,6 +106,13 @@ final class OfflinePromptOptimizer {
         warnings: inout [String]
     ) -> [String] {
         switch scenario.scenario {
+        case .generalAssistant:
+            appliedRules.append("Applied general assistant scaffold for chat-style usage.")
+            return [
+                "Answer directly first, then add concise supporting detail if needed.",
+                "Use lightweight structure only when it improves scanability.",
+                "State assumptions explicitly before irreversible actions."
+            ]
         case .ideCodingAssistant:
             appliedRules.append("Applied IDE coding scaffold (plan + diff + tests + verification).")
             return [
@@ -192,6 +199,11 @@ final class OfflinePromptOptimizer {
             Example loop:
             Plan -> Tool Call(args) -> Observation -> Next Action -> Final Output
             """
+        case .generalAssistant:
+            return """
+            Example style:
+            Direct answer first, followed by short assumptions and optional next steps.
+            """
         default:
             return nil
         }
@@ -251,6 +263,10 @@ final class OfflinePromptOptimizer {
         var maxTokens: Int
 
         switch scenario.scenario {
+        case .generalAssistant:
+            temperature = 0.3
+            topP = 0.9
+            maxTokens = 1_100
         case .ideCodingAssistant:
             temperature = 0.2
             topP = 0.9

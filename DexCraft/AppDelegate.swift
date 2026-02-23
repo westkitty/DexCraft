@@ -178,6 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = .floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.titlebarAppearsTransparent = true
         panel.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
         panel.minSize = NSSize(width: minWidth, height: 520)
         panel.delegate = self

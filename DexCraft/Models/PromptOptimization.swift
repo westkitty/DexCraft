@@ -16,6 +16,7 @@ enum ModelFamily: String, CaseIterable, Codable, Identifiable {
 }
 
 enum ScenarioProfile: String, CaseIterable, Codable, Identifiable {
+    case generalAssistant = "General Assistant (Chat Apps)"
     case ideCodingAssistant = "IDE Coding Assistant"
     case cliAssistant = "CLI Assistant"
     case jsonStructuredOutput = "JSON / Structured Output"
@@ -219,6 +220,15 @@ enum OfflinePromptKnowledgeBase {
     ]
 
     static let scenarioRules: [ScenarioProfile: ScenarioRules] = [
+        .generalAssistant: ScenarioRules(
+            scenario: .generalAssistant,
+            outputFormat: .structuredMarkdown,
+            verbosityTarget: .balanced,
+            requiresCitations: false,
+            strictJsonModePreferred: false,
+            cliConstraintsEnabled: false,
+            notes: "General-purpose assistant profile for everyday chat and task support."
+        ),
         .ideCodingAssistant: ScenarioRules(
             scenario: .ideCodingAssistant,
             outputFormat: .patchAndChecklist,
