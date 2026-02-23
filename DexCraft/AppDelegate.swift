@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let vm = PromptEngineViewModel()
         vm.onRevealStateChanged = { [weak self] expanded in
             self?.resizePopover(expanded: expanded, animated: true)
+            self?.updateDetachedWindowMinimumSize(expanded: expanded)
         }
         vm.onDetachedWindowToggleRequested = { [weak self] in
             self?.toggleDetachedWindow()
@@ -163,7 +164,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             popover.performClose(nil)
         }
 
-        let width = viewModel.isResultPanelVisible ? expandedSize.width : collapsedSize.width
+        let minWidth = viewModel.isResultPanelVisible ? 760 : collapsedSize.width
+        let width = max(viewModel.isResultPanelVisible ? expandedSize.width : collapsedSize.width, minWidth)
         let rect = NSRect(x: 0, y: 0, width: width, height: collapsedSize.height)
         let panel = NSPanel(
             contentRect: rect,
@@ -177,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
-        panel.minSize = NSSize(width: collapsedSize.width, height: 480)
+        panel.minSize = NSSize(width: minWidth, height: 520)
         panel.delegate = self
         panel.isReleasedWhenClosed = false
         panel.contentViewController = NSHostingController(
@@ -212,6 +214,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         detachedWindow = nil
         viewModel.setDetachedWindowActive(false)
+    }
+
+    private func updateDetachedWindowMinimumSize(expanded: Bool) {
+        guard let window = detachedWindow else { return }
+        let minWidth = expanded ? 760 : collapsedSize.width
+        window.minSize = NSSize(width: minWidth, height: 520)
     }
 
     private func resizePopover(expanded: Bool, animated: Bool) {
