@@ -14,6 +14,7 @@ struct PrimaryPanelView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     selectorSection
                     roughInputEditor
+                    structuredEditorPreview
 
                     if !viewModel.detectedVariables.isEmpty {
                         variableSection
@@ -200,6 +201,94 @@ struct PrimaryPanelView: View {
         .glassCard()
     }
 
+    private var structuredEditorPreview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Structured Draft + Live Preview")
+                .font(.headline)
+
+            Group {
+                Text("Goal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $viewModel.draftGoal)
+                    .font(.system(size: 12))
+                    .frame(height: 44)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            Group {
+                Text("Context")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $viewModel.draftContext)
+                    .font(.system(size: 12))
+                    .frame(height: 56)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Constraints (one per line)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $viewModel.draftConstraintsText)
+                        .font(.system(size: 12))
+                        .frame(height: 66)
+                        .scrollContentBackground(.hidden)
+                        .padding(6)
+                        .background(Color.black.opacity(0.2))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Deliverables (one per line)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $viewModel.draftDeliverablesText)
+                        .font(.system(size: 12))
+                        .frame(height: 66)
+                        .scrollContentBackground(.hidden)
+                        .padding(6)
+                        .background(Color.black.opacity(0.2))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+
+            HStack {
+                Text("Preview Format")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Preview Format", selection: $viewModel.structuredPreviewFormat) {
+                    ForEach(Format.allCases) { format in
+                        Text(format.rawValue).tag(format)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
+            ScrollView {
+                Text(viewModel.structuredPreview)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(10)
+            }
+            .frame(height: 170)
+            .background(Color.black.opacity(0.22))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(10)
+        .glassCard()
+    }
+
     private var variableSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Variable Injection")
@@ -235,6 +324,8 @@ struct PrimaryPanelView: View {
         switch viewModel.activeTab {
         case .enhance:
             enhancementTab
+        case .library:
+            libraryTab
         case .templates:
             templatesTab
         case .history:
@@ -275,6 +366,10 @@ struct PrimaryPanelView: View {
         }
         .padding(10)
         .glassCard()
+    }
+
+    private var libraryTab: some View {
+        PromptLibraryTab(viewModel: viewModel)
     }
 
     private var templatesTab: some View {
@@ -354,6 +449,273 @@ struct PrimaryPanelView: View {
         }
         .padding(10)
         .glassCard()
+    }
+}
+
+private struct PromptLibraryTab: View {
+    @ObservedObject var viewModel: PromptEngineViewModel
+
+    @State private var selectedPromptID: UUID?
+    @State private var selectedPromptForTags: PromptLibraryItem?
+    @State private var newCategoryName: String = ""
+    @State private var newTagName: String = ""
+    @State private var newPromptTitle: String = ""
+    @State private var newPromptBody: String = ""
+    @State private var newPromptCategoryID: UUID?
+
+    private var selectedPrompt: PromptLibraryItem? {
+        guard let selectedPromptID else { return nil }
+        return viewModel.promptLibraryPrompts.first(where: { $0.id == selectedPromptID })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                TextField("Search title, body, or tag", text: $viewModel.promptLibrarySearchQuery)
+                    .textFieldStyle(.roundedBorder)
+                Text("\(viewModel.filteredPromptLibraryPrompts.count) prompts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .top, spacing: 10) {
+                categoryColumn
+                promptColumn
+            }
+
+            HStack(spacing: 8) {
+                TextField("New tag", text: $newTagName)
+                    .textFieldStyle(.roundedBorder)
+                Button("Add Tag") {
+                    viewModel.createPromptLibraryTag(name: newTagName)
+                    newTagName = ""
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(10)
+        .glassCard()
+        .sheet(item: $selectedPromptForTags) { prompt in
+            PromptTagAssignmentSheet(viewModel: viewModel, prompt: prompt)
+        }
+    }
+
+    private var categoryColumn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Categories")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    categoryRow(title: "All", id: nil, canDelete: false)
+                    ForEach(viewModel.promptLibraryCategories) { category in
+                        categoryRow(title: category.name, id: category.id, canDelete: true)
+                    }
+                }
+            }
+            .frame(minHeight: 240, maxHeight: 240)
+
+            HStack(spacing: 8) {
+                TextField("New category", text: $newCategoryName)
+                    .textFieldStyle(.roundedBorder)
+                Button("Add") {
+                    viewModel.createPromptLibraryCategory(name: newCategoryName)
+                    newCategoryName = ""
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(width: 190, alignment: .topLeading)
+    }
+
+    private var promptColumn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Prompts")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            List(selection: $selectedPromptID) {
+                ForEach(viewModel.filteredPromptLibraryPrompts) { prompt in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(prompt.title)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(viewModel.promptLibraryCategoryName(for: prompt))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .tag(prompt.id)
+                }
+            }
+            .frame(minHeight: 180, maxHeight: 220)
+
+            if let selectedPrompt {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Menu("Category: \(viewModel.promptLibraryCategoryName(for: selectedPrompt))") {
+                            Button("Uncategorized") {
+                                viewModel.updatePromptLibraryPromptCategory(promptId: selectedPrompt.id, categoryId: nil)
+                            }
+                            ForEach(viewModel.promptLibraryCategories) { category in
+                                Button(category.name) {
+                                    viewModel.updatePromptLibraryPromptCategory(promptId: selectedPrompt.id, categoryId: category.id)
+                                }
+                            }
+                        }
+
+                        Button("Assign Tags") {
+                            selectedPromptForTags = selectedPrompt
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(role: .destructive) {
+                            viewModel.deletePromptLibraryPrompt(promptId: selectedPrompt.id)
+                            selectedPromptID = nil
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    let tags = viewModel.promptLibraryTagNames(for: selectedPrompt)
+                    Text(tags.isEmpty ? "Tags: None" : "Tags: \(tags.joined(separator: ", "))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .padding(8)
+                .background(Color.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Prompt title", text: $newPromptTitle)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Prompt body", text: $newPromptBody, axis: .vertical)
+                    .lineLimit(3...6)
+                    .textFieldStyle(.roundedBorder)
+                Picker("Category", selection: $newPromptCategoryID) {
+                    Text("Uncategorized").tag(Optional<UUID>.none)
+                    ForEach(viewModel.promptLibraryCategories) { category in
+                        Text(category.name).tag(Optional(category.id))
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Button("Add Prompt") {
+                    viewModel.createPromptLibraryPrompt(
+                        title: newPromptTitle,
+                        body: newPromptBody,
+                        categoryId: newPromptCategoryID
+                    )
+                    newPromptTitle = ""
+                    newPromptBody = ""
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func categoryRow(title: String, id: UUID?, canDelete: Bool) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                viewModel.promptLibrarySelectedCategoryId = id
+            } label: {
+                HStack {
+                    Text(title)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if viewModel.promptLibrarySelectedCategoryId == id {
+                        Image(systemName: "checkmark")
+                            .font(.caption2)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(viewModel.promptLibrarySelectedCategoryId == id ? Color.cyan.opacity(0.2) : Color.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
+            if canDelete, let id, let category = viewModel.promptLibraryCategories.first(where: { $0.id == id }) {
+                Button(role: .destructive) {
+                    viewModel.deletePromptLibraryCategory(category)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+}
+
+private struct PromptTagAssignmentSheet: View {
+    @ObservedObject var viewModel: PromptEngineViewModel
+    let prompt: PromptLibraryItem
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedTagIDs: Set<UUID>
+
+    init(viewModel: PromptEngineViewModel, prompt: PromptLibraryItem) {
+        self.viewModel = viewModel
+        self.prompt = prompt
+        _selectedTagIDs = State(initialValue: Set(prompt.tagIds))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Assign Tags")
+                .font(.title3.weight(.semibold))
+            Text(prompt.title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if viewModel.promptLibraryTags.isEmpty {
+                Text("No tags available. Add a tag first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.promptLibraryTags) { tag in
+                            Toggle(
+                                tag.name,
+                                isOn: Binding(
+                                    get: { selectedTagIDs.contains(tag.id) },
+                                    set: { enabled in
+                                        if enabled {
+                                            selectedTagIDs.insert(tag.id)
+                                        } else {
+                                            selectedTagIDs.remove(tag.id)
+                                        }
+                                    }
+                                )
+                            )
+                        }
+                    }
+                }
+                .frame(maxHeight: 240)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                Button("Save") {
+                    viewModel.updatePromptLibraryPromptTags(promptId: prompt.id, tagIds: Array(selectedTagIDs))
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 360, minHeight: 280)
     }
 }
 

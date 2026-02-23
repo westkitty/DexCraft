@@ -2,6 +2,7 @@ import Foundation
 
 enum WorkbenchTab: String, CaseIterable, Identifiable {
     case enhance = "Enhance"
+    case library = "Library"
     case templates = "Templates"
     case history = "History"
     case settings = "Settings"

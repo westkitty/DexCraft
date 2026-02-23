@@ -69,11 +69,22 @@ final class PromptEngineViewModel: ObservableObject {
 
     @Published private(set) var templates: [PromptTemplate] = []
     @Published private(set) var history: [PromptHistoryEntry] = []
+    @Published var promptLibrarySearchQuery: String = ""
+    @Published var promptLibrarySelectedCategoryId: UUID?
+    @Published private(set) var promptLibraryCategories: [PromptCategory] = []
+    @Published private(set) var promptLibraryTags: [PromptTag] = []
+    @Published private(set) var promptLibraryPrompts: [PromptLibraryItem] = []
+    @Published var draftGoal: String = ""
+    @Published var draftContext: String = ""
+    @Published var draftConstraintsText: String = ""
+    @Published var draftDeliverablesText: String = ""
+    @Published var structuredPreviewFormat: Format = .plainText
 
     var onRevealStateChanged: ((Bool) -> Void)?
     var onDetachedWindowToggleRequested: (() -> Void)?
 
     private let storageManager: StorageManager
+    private let promptLibraryRepository: PromptLibraryRepository
     private let offlinePromptOptimizer = OfflinePromptOptimizer()
     private let variableRegex = try? NSRegularExpression(pattern: #"\{([a-zA-Z0-9_\-]+)\}"#)
 
@@ -129,8 +140,12 @@ final class PromptEngineViewModel: ObservableObject {
         var revertPlan: [String]
     }
 
-    init(storageManager: StorageManager = StorageManager()) {
+    init(
+        storageManager: StorageManager = StorageManager(),
+        promptLibraryRepository: PromptLibraryRepository = PromptLibraryRepository()
+    ) {
         self.storageManager = storageManager
+        self.promptLibraryRepository = promptLibraryRepository
         templates = storageManager.loadTemplates()
         history = storageManager.loadHistory()
 
@@ -138,21 +153,22 @@ final class PromptEngineViewModel: ObservableObject {
         if templates.isEmpty {
             templates = defaultTemplates
             storageManager.saveTemplates(templates)
-            return
+        } else {
+            var knownTemplateNames = Set(
+                templates.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            )
+            let missingDefaults = defaultTemplates.filter { preset in
+                let key = preset.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return knownTemplateNames.insert(key).inserted
+            }
+
+            if !missingDefaults.isEmpty {
+                templates.append(contentsOf: missingDefaults)
+                storageManager.saveTemplates(templates)
+            }
         }
 
-        var knownTemplateNames = Set(
-            templates.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        )
-        let missingDefaults = defaultTemplates.filter { preset in
-            let key = preset.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return knownTemplateNames.insert(key).inserted
-        }
-
-        if !missingDefaults.isEmpty {
-            templates.append(contentsOf: missingDefaults)
-            storageManager.saveTemplates(templates)
-        }
+        refreshPromptLibraryState()
     }
 
     var qualityChecks: [QualityCheck] {
@@ -444,6 +460,91 @@ final class PromptEngineViewModel: ObservableObject {
         return formatter.string(from: date)
     }
 
+    var filteredPromptLibraryPrompts: [PromptLibraryItem] {
+        promptLibraryRepository.searchPrompts(
+            query: promptLibrarySearchQuery,
+            categoryId: promptLibrarySelectedCategoryId
+        )
+    }
+
+    var structuredDraft: Draft {
+        Draft(
+            goal: draftGoal,
+            context: draftContext,
+            constraints: parseStructuredList(from: draftConstraintsText),
+            deliverables: parseStructuredList(from: draftDeliverablesText)
+        )
+    }
+
+    var structuredPreview: String {
+        buildPreview(draft: structuredDraft, format: structuredPreviewFormat)
+    }
+
+    func createPromptLibraryCategory(name: String) {
+        guard promptLibraryRepository.createCategory(name: name) != nil else {
+            statusMessage = "Category name is required."
+            return
+        }
+
+        refreshPromptLibraryState()
+        statusMessage = "Category saved."
+    }
+
+    func deletePromptLibraryCategory(_ category: PromptCategory) {
+        promptLibraryRepository.deleteCategory(id: category.id)
+
+        if promptLibrarySelectedCategoryId == category.id {
+            promptLibrarySelectedCategoryId = nil
+        }
+
+        refreshPromptLibraryState()
+        statusMessage = "Category removed."
+    }
+
+    func createPromptLibraryTag(name: String) {
+        guard promptLibraryRepository.createTag(name: name) != nil else {
+            statusMessage = "Tag name is required."
+            return
+        }
+
+        refreshPromptLibraryState()
+        statusMessage = "Tag saved."
+    }
+
+    func createPromptLibraryPrompt(title: String, body: String, categoryId: UUID? = nil) {
+        guard promptLibraryRepository.createPrompt(title: title, body: body, categoryId: categoryId) != nil else {
+            statusMessage = "Prompt title is required."
+            return
+        }
+
+        refreshPromptLibraryState()
+        statusMessage = "Prompt saved to library."
+    }
+
+    func updatePromptLibraryPromptCategory(promptId: UUID, categoryId: UUID?) {
+        promptLibraryRepository.updatePromptCategory(promptId: promptId, categoryId: categoryId)
+        refreshPromptLibraryState()
+    }
+
+    func updatePromptLibraryPromptTags(promptId: UUID, tagIds: [UUID]) {
+        promptLibraryRepository.updatePromptTags(promptId: promptId, tagIds: tagIds)
+        refreshPromptLibraryState()
+    }
+
+    func deletePromptLibraryPrompt(promptId: UUID) {
+        promptLibraryRepository.deletePrompt(id: promptId)
+        refreshPromptLibraryState()
+        statusMessage = "Prompt removed."
+    }
+
+    func promptLibraryCategoryName(for prompt: PromptLibraryItem) -> String {
+        promptLibraryRepository.categoryName(for: prompt.categoryId)
+    }
+
+    func promptLibraryTagNames(for prompt: PromptLibraryItem) -> [String] {
+        promptLibraryRepository.tagNames(for: prompt.tagIds)
+    }
+
     func diffText() -> String {
         let original = resolvedInput
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -495,6 +596,18 @@ final class PromptEngineViewModel: ObservableObject {
         let topP = optimizationSuggestedTopP.map { String(format: "%.2f", $0) } ?? "n/a"
         let maxTokens = optimizationSuggestedMaxTokens.map(String.init) ?? "n/a"
         return "temperature=\(temperature), top_p=\(topP), max_tokens=\(maxTokens)"
+    }
+
+    private func refreshPromptLibraryState() {
+        promptLibraryCategories = promptLibraryRepository.categories
+        promptLibraryTags = promptLibraryRepository.tags
+        promptLibraryPrompts = promptLibraryRepository.prompts
+    }
+
+    private func parseStructuredList(from text: String) -> [String] {
+        text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     private func syncVariables() {
