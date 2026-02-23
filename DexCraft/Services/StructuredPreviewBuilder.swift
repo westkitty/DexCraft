@@ -39,13 +39,15 @@ private func buildPlainTextPreview(draft: Draft) -> String {
         sections.append("Context:\n\(context)")
     }
 
-    if !draft.constraints.isEmpty {
-        let lines = draft.constraints.map { "- \($0)" }.joined(separator: "\n")
+    let constraints = normalizedList(draft.constraints)
+    if !constraints.isEmpty {
+        let lines = constraints.map { "- \($0)" }.joined(separator: "\n")
         sections.append("Constraints:\n\(lines)")
     }
 
-    if !draft.deliverables.isEmpty {
-        let lines = draft.deliverables.map { "- \($0)" }.joined(separator: "\n")
+    let deliverables = normalizedList(draft.deliverables)
+    if !deliverables.isEmpty {
+        let lines = deliverables.map { "- \($0)" }.joined(separator: "\n")
         sections.append("Deliverables:\n\(lines)")
     }
 
@@ -65,13 +67,15 @@ private func buildMarkdownPreview(draft: Draft) -> String {
         sections.append("## Context\n\(context)")
     }
 
-    if !draft.constraints.isEmpty {
-        let lines = draft.constraints.map { "- \($0)" }.joined(separator: "\n")
+    let constraints = normalizedList(draft.constraints)
+    if !constraints.isEmpty {
+        let lines = constraints.map { "- \($0)" }.joined(separator: "\n")
         sections.append("## Constraints\n\(lines)")
     }
 
-    if !draft.deliverables.isEmpty {
-        let lines = draft.deliverables.map { "- \($0)" }.joined(separator: "\n")
+    let deliverables = normalizedList(draft.deliverables)
+    if !deliverables.isEmpty {
+        let lines = deliverables.map { "- \($0)" }.joined(separator: "\n")
         sections.append("## Deliverables\n\(lines)")
     }
 
@@ -82,8 +86,8 @@ private func buildJSONPreview(draft: Draft) -> String {
     let normalized = Draft(
         goal: draft.goal.trimmingCharacters(in: .whitespacesAndNewlines),
         context: draft.context.trimmingCharacters(in: .whitespacesAndNewlines),
-        constraints: draft.constraints,
-        deliverables: draft.deliverables
+        constraints: normalizedList(draft.constraints),
+        deliverables: normalizedList(draft.deliverables)
     )
 
     struct PreviewPayload: Codable {
@@ -109,4 +113,10 @@ private func buildJSONPreview(draft: Draft) -> String {
     } catch {
         return "{}"
     }
+}
+
+private func normalizedList(_ values: [String]) -> [String] {
+    values
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
 }

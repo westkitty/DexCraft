@@ -1,6 +1,21 @@
 import XCTest
 
 final class AnalyticsTests: XCTestCase {
+    private final class ThrowingLoadBackend: StorageBackend {
+        struct DecodeFailure: Error {}
+        var saveCount = 0
+
+        func load<T: Decodable>(_ type: T.Type, from filename: String) throws -> T? {
+            throw DecodeFailure()
+        }
+
+        func save<T: Encodable>(_ value: T, to filename: String) throws {
+            saveCount += 1
+        }
+
+        func delete(_ filename: String) throws {}
+    }
+
     private let filename = "analytics-tests.json"
 
     func testRecordRunPersists() {
@@ -74,6 +89,12 @@ final class AnalyticsTests: XCTestCase {
         repository.addRun(record: makeRecord(promptId: promptId, estimatedTokensInput: 2, estimatedTokensOutput: 7))
 
         XCTAssertEqual(repository.averageTokens(promptId: promptId), 6)
+    }
+
+    func testReloadDecodeFailureDoesNotPersistEmptyAnalytics() {
+        let backend = ThrowingLoadBackend()
+        _ = AnalyticsRepository(storageBackend: backend, filename: filename)
+        XCTAssertEqual(backend.saveCount, 0)
     }
 
     private func makeRecord(

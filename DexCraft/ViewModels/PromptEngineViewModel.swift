@@ -86,7 +86,7 @@ final class PromptEngineViewModel: ObservableObject {
     private let storageManager: StorageManager
     private let promptLibraryRepository: PromptLibraryRepository
     private let offlinePromptOptimizer = OfflinePromptOptimizer()
-    private let variableRegex = try? NSRegularExpression(pattern: #"\{([a-zA-Z0-9_\-]+)\}"#)
+    private let variableRegex = try? NSRegularExpression(pattern: #"\{([A-Za-z_][A-Za-z0-9_]*)\}"#)
 
     private let noFillerConstraint = "Respond only with the requested output. Do not apologize or use conversational filler."
     private let markdownConstraint = "Use strict markdown structure and headings exactly as specified."

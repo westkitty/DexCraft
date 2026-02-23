@@ -97,6 +97,30 @@ final class QualityCheckEngineTests: XCTestCase {
         XCTAssertEqual(constraintsCheck.severity, .warning)
     }
 
+    func testConstraintsEnabledButWhitespaceOnly() {
+        let ctx = PromptBuildContext(
+            goal: baseContext.goal,
+            context: baseContext.context,
+            constraints: ["   ", "\n"],
+            deliverables: baseContext.deliverables,
+            variables: baseContext.variables
+        )
+
+        let checks = engine.evaluate(
+            ctx: ctx,
+            sections: allSections,
+            variableResult: resolvedVariables,
+            generatedPrompt: longEnoughPrompt
+        )
+
+        guard let constraintsCheck = checks.first(where: { $0.title.localizedCaseInsensitiveContains("constraints") }) else {
+            return XCTFail("Expected constraints check.")
+        }
+
+        XCTAssertFalse(constraintsCheck.passed)
+        XCTAssertEqual(constraintsCheck.severity, .warning)
+    }
+
     func testOutputTooShort() {
         let checks = engine.evaluate(
             ctx: baseContext,

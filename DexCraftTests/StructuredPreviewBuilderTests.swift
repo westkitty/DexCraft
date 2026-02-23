@@ -74,4 +74,31 @@ final class StructuredPreviewBuilderTests: XCTestCase {
         XCTAssertTrue(preview.contains("## Constraints"))
         XCTAssertTrue(preview.contains("- C1"))
     }
+
+    func testPreviewTrimsAndDropsEmptyListItems() throws {
+        let draft = Draft(
+            goal: " A ",
+            context: " B ",
+            constraints: ["  C1  ", "", "   "],
+            deliverables: ["  D1  ", "  "]
+        )
+
+        let plainText = buildPreview(draft: draft, format: .plainText)
+        XCTAssertTrue(plainText.contains("- C1"))
+        XCTAssertFalse(plainText.contains("- C1 "))
+        XCTAssertFalse(plainText.contains("\n- \n"))
+
+        struct JSONPreviewPayload: Codable, Equatable {
+            let goal: String
+            let context: String
+            let constraints: [String]
+            let deliverables: [String]
+        }
+
+        let json = buildPreview(draft: draft, format: .json)
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        let decoded = try JSONDecoder().decode(JSONPreviewPayload.self, from: data)
+        XCTAssertEqual(decoded.constraints, ["C1"])
+        XCTAssertEqual(decoded.deliverables, ["D1"])
+    }
 }

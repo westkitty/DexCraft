@@ -1,6 +1,21 @@
 import XCTest
 
 final class StorageAndRepositoryTests: XCTestCase {
+    private final class ThrowingLoadBackend: StorageBackend {
+        struct DecodeFailure: Error {}
+        var saveCount = 0
+
+        func load<T: Decodable>(_ type: T.Type, from filename: String) throws -> T? {
+            throw DecodeFailure()
+        }
+
+        func save<T: Encodable>(_ value: T, to filename: String) throws {
+            saveCount += 1
+        }
+
+        func delete(_ filename: String) throws {}
+    }
+
     private let filename = "storage-and-repository-tests.json"
 
     func testInMemoryRoundTrip() throws {
@@ -85,5 +100,11 @@ final class StorageAndRepositoryTests: XCTestCase {
         XCTAssertEqual(reloaded.categories.map(\.name), ["Alpha", "personal", "Work"])
         XCTAssertEqual(reloaded.tags.map(\.name), ["alpha", "Beta", "zeta"])
         XCTAssertEqual(reloaded.prompts.map(\.title), ["A task", "m task", "z task"])
+    }
+
+    func testReloadDecodeFailureDoesNotPersistEmptyBundle() {
+        let backend = ThrowingLoadBackend()
+        _ = PromptLibraryRepository(storageBackend: backend, filename: filename)
+        XCTAssertEqual(backend.saveCount, 0)
     }
 }

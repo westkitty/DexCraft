@@ -133,10 +133,13 @@ final class PromptLibraryRepository {
     }
 
     func reload() {
-        bundle = loadBundleBestEffort()
+        let loaded = loadBundleBestEffort()
+        bundle = loaded.bundle
 
         normalizeInPlace()
-        persist()
+        if loaded.shouldPersist {
+            persist()
+        }
     }
 
     func persist() {
@@ -408,34 +411,48 @@ final class PromptLibraryRepository {
         )
     }
 
-    private func loadBundleBestEffort() -> PromptLibraryBundle {
-        if let currentBundle = tryLoad(PromptLibraryBundle.self) {
-            return currentBundle
+    private func loadBundleBestEffort() -> (bundle: PromptLibraryBundle, shouldPersist: Bool) {
+        var encounteredDecodeFailure = false
+
+        let currentBundleLoad = tryLoad(PromptLibraryBundle.self)
+        if let currentBundle = currentBundleLoad.value {
+            return (currentBundle, true)
         }
+        encounteredDecodeFailure = encounteredDecodeFailure || currentBundleLoad.hadError
 
         // Legacy shape: top-level prompt array only.
-        if let promptsOnly = tryLoad([PromptLibraryItem].self) {
-            return PromptLibraryBundle(categories: [], tags: [], prompts: promptsOnly)
+        let promptsOnlyLoad = tryLoad([PromptLibraryItem].self)
+        if let promptsOnly = promptsOnlyLoad.value {
+            return (PromptLibraryBundle(categories: [], tags: [], prompts: promptsOnly), true)
         }
+        encounteredDecodeFailure = encounteredDecodeFailure || promptsOnlyLoad.hadError
 
         // Legacy shape: object with optional arrays and prompts without versions.
-        if let legacyBundle = tryLoad(LegacyPromptLibraryBundle.self) {
-            return PromptLibraryBundle(
+        let legacyBundleLoad = tryLoad(LegacyPromptLibraryBundle.self)
+        if let legacyBundle = legacyBundleLoad.value {
+            return (PromptLibraryBundle(
                 categories: legacyBundle.categories ?? [],
                 tags: legacyBundle.tags ?? [],
                 prompts: (legacyBundle.prompts ?? []).map { $0.toPromptLibraryItem() }
-            )
+            ), true)
+        }
+        encounteredDecodeFailure = encounteredDecodeFailure || legacyBundleLoad.hadError
+
+        // Avoid destructive overwrite when decoding fails for existing unknown/corrupt data.
+        if encounteredDecodeFailure {
+            return (.empty, false)
         }
 
-        return .empty
+        // Missing file / first launch: persist normalized empty bundle.
+        return (.empty, true)
     }
 
-    private func tryLoad<T: Decodable>(_ type: T.Type) -> T? {
+    private func tryLoad<T: Decodable>(_ type: T.Type) -> (value: T?, hadError: Bool) {
         do {
-            return try storageBackend.load(type, from: filename)
+            return (try storageBackend.load(type, from: filename), false)
         } catch {
             NSLog("DexCraft PromptLibraryRepository decode as \(String(describing: type)) failed: \(error.localizedDescription)")
-            return nil
+            return (nil, true)
         }
     }
 
@@ -543,9 +560,12 @@ final class AnalyticsRepository {
     }
 
     func reload() {
-        bundle = loadBundleBestEffort()
+        let loaded = loadBundleBestEffort()
+        bundle = loaded.bundle
         normalizeInPlace()
-        persist()
+        if loaded.shouldPersist {
+            persist()
+        }
     }
 
     func persist() {
@@ -625,24 +645,34 @@ final class AnalyticsRepository {
         }
     }
 
-    private func loadBundleBestEffort() -> PromptAnalyticsBundle {
-        if let currentBundle = tryLoad(PromptAnalyticsBundle.self) {
-            return currentBundle
+    private func loadBundleBestEffort() -> (bundle: PromptAnalyticsBundle, shouldPersist: Bool) {
+        var encounteredDecodeFailure = false
+
+        let currentBundleLoad = tryLoad(PromptAnalyticsBundle.self)
+        if let currentBundle = currentBundleLoad.value {
+            return (currentBundle, true)
+        }
+        encounteredDecodeFailure = encounteredDecodeFailure || currentBundleLoad.hadError
+
+        let legacyRunsLoad = tryLoad([PromptRunRecord].self)
+        if let legacyRuns = legacyRunsLoad.value {
+            return (PromptAnalyticsBundle(runs: legacyRuns), true)
+        }
+        encounteredDecodeFailure = encounteredDecodeFailure || legacyRunsLoad.hadError
+
+        if encounteredDecodeFailure {
+            return (.empty, false)
         }
 
-        if let legacyRuns = tryLoad([PromptRunRecord].self) {
-            return PromptAnalyticsBundle(runs: legacyRuns)
-        }
-
-        return .empty
+        return (.empty, true)
     }
 
-    private func tryLoad<T: Decodable>(_ type: T.Type) -> T? {
+    private func tryLoad<T: Decodable>(_ type: T.Type) -> (value: T?, hadError: Bool) {
         do {
-            return try storageBackend.load(type, from: filename)
+            return (try storageBackend.load(type, from: filename), false)
         } catch {
             NSLog("DexCraft AnalyticsRepository decode as \(String(describing: type)) failed: \(error.localizedDescription)")
-            return nil
+            return (nil, true)
         }
     }
 }

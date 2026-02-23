@@ -13,7 +13,10 @@ final class QualityCheckEngine {
         let missingVariables = variableResult.unfilled
         let variablesPassed = missingVariables.isEmpty
 
-        let constraintsPassed = !sections.includeConstraints || !ctx.constraints.isEmpty
+        let nonEmptyConstraints = ctx.constraints
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let constraintsPassed = !sections.includeConstraints || !nonEmptyConstraints.isEmpty
 
         let outputSizePassed = generatedPrompt.count >= 200 && generatedPrompt.count <= 20_000
 

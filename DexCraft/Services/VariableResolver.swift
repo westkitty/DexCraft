@@ -7,10 +7,14 @@ struct VariableResolutionResult: Equatable {
 }
 
 final class VariableResolver {
-    private let variableRegex = try! NSRegularExpression(pattern: #"\{([A-Za-z_][A-Za-z0-9_]*)\}"#)
+    private static let pattern = #"\{([A-Za-z_][A-Za-z0-9_]*)\}"#
 
     func detect(in text: String) -> [String] {
-        let matches = variableRegex.matches(
+        guard let regex = try? NSRegularExpression(pattern: Self.pattern) else {
+            return []
+        }
+
+        let matches = regex.matches(
             in: text,
             options: [],
             range: NSRange(text.startIndex..<text.endIndex, in: text)
@@ -37,7 +41,11 @@ final class VariableResolver {
     }
 
     func resolve(text: String, values: [String: String]) -> VariableResolutionResult {
-        let matches = variableRegex.matches(
+        guard let regex = try? NSRegularExpression(pattern: Self.pattern) else {
+            return VariableResolutionResult(detected: [], resolvedText: text, unfilled: [])
+        }
+
+        let matches = regex.matches(
             in: text,
             options: [],
             range: NSRange(text.startIndex..<text.endIndex, in: text)
