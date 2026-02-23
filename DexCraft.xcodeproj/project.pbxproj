@@ -19,6 +19,7 @@
 		A1B2C3D4E5F6012345675009 /* StorageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671020 /* StorageManager.swift */; };
 		A1B2C3D4E5F6012345675011 /* OfflinePromptOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */; };
 		A1B2C3D4E5F6012345675016 /* PromptLibraryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671017 /* PromptLibraryModels.swift */; };
+		A1B2C3D4E5F6012345675039 /* PromptProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671018 /* PromptProfile.swift */; };
 		A1B2C3D4E5F6012345675017 /* PromptLibraryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671022 /* PromptLibraryRepository.swift */; };
 		A1B2C3D4E5F601234567500A /* PromptEngineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */; };
 		A1B2C3D4E5F601234567500B /* PrimaryPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */; };
@@ -50,10 +51,18 @@
 				A1B2C3D4E5F6012345675032 /* QualityCheckEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671069 /* QualityCheckEngineTests.swift */; };
 				A1B2C3D4E5F6012345675033 /* QualityCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671014 /* QualityCheck.swift */; };
 				A1B2C3D4E5F6012345675034 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671028 /* ExportService.swift */; };
+				A1B2C3D4E5F6012345675040 /* PromptRestructurer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671029 /* PromptRestructurer.swift */; };
+				A1B2C3D4E5F6012345675043 /* PromptFormattingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F601234567102A /* PromptFormattingEngine.swift */; };
 				A1B2C3D4E5F6012345675035 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671028 /* ExportService.swift */; };
 				A1B2C3D4E5F6012345675036 /* ExportServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F601234567106A /* ExportServiceTests.swift */; };
 				A1B2C3D4E5F6012345675037 /* StorageAndRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F601234567106B /* StorageAndRepositoryTests.swift */; };
 				A1B2C3D4E5F6012345675038 /* AnalyticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F601234567106C /* AnalyticsTests.swift */; };
+				A1B2C3D4E5F6012345675041 /* PromptRestructurerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F601234567106D /* PromptRestructurerTests.swift */; };
+				A1B2C3D4E5F6012345675044 /* PromptFormattingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F601234567102A /* PromptFormattingEngine.swift */; };
+				A1B2C3D4E5F6012345675045 /* PromptRestructurer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671029 /* PromptRestructurer.swift */; };
+				A1B2C3D4E5F6012345675046 /* PromptProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671018 /* PromptProfile.swift */; };
+				A1B2C3D4E5F6012345675047 /* EnhancementOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671010 /* EnhancementOptions.swift */; };
+				A1B2C3D4E5F6012345675042 /* PromptingPlaybooks.md in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671051 /* PromptingPlaybooks.md */; };
 				A1B2C3D4E5F6012345675013 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671061 /* XCTest.framework */; };
 		A1B2C3D4E5F6012345675014 /* PromptOptimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */; };
 		A1B2C3D4E5F6012345675015 /* OfflinePromptOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */; };
@@ -81,6 +90,7 @@
 		A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchTab.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptOptimization.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671017 /* PromptLibraryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptLibraryModels.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671018 /* PromptProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptProfile.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671020 /* StorageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManager.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflinePromptOptimizer.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671022 /* PromptLibraryRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptLibraryRepository.swift; sourceTree = "<group>"; };
@@ -90,12 +100,15 @@
 				A1B2C3D4E5F6012345671026 /* PromptBuilders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptBuilders.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F6012345671027 /* QualityCheckEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QualityCheckEngine.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F6012345671028 /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
+				A1B2C3D4E5F6012345671029 /* PromptRestructurer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptRestructurer.swift; sourceTree = "<group>"; };
+				A1B2C3D4E5F601234567102A /* PromptFormattingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptFormattingEngine.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEngineViewModel.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryPanelView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671041 /* ResultPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultPanelView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671042 /* RootPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootPopoverView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671043 /* TransparentTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransparentTextEditor.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671050 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671051 /* PromptingPlaybooks.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = PromptingPlaybooks.md; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671060 /* OfflinePromptOptimizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflinePromptOptimizerTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671062 /* PromptLibraryRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptLibraryRepositoryTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671063 /* PromptVersioningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptVersioningTests.swift; sourceTree = "<group>"; };
@@ -108,6 +121,7 @@
 				A1B2C3D4E5F601234567106A /* ExportServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportServiceTests.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F601234567106B /* StorageAndRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAndRepositoryTests.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F601234567106C /* AnalyticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsTests.swift; sourceTree = "<group>"; };
+				A1B2C3D4E5F601234567106D /* PromptRestructurerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptRestructurerTests.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F6012345671061 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		A1B2C3D4E5F60123456710FF /* DexCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DexCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4E5F6012345671100 /* DexCraftTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DexCraftTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -177,6 +191,7 @@
 				A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */,
 				A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */,
 				A1B2C3D4E5F6012345671017 /* PromptLibraryModels.swift */,
+				A1B2C3D4E5F6012345671018 /* PromptProfile.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -193,6 +208,8 @@
 						A1B2C3D4E5F6012345671026 /* PromptBuilders.swift */,
 						A1B2C3D4E5F6012345671027 /* QualityCheckEngine.swift */,
 						A1B2C3D4E5F6012345671028 /* ExportService.swift */,
+						A1B2C3D4E5F6012345671029 /* PromptRestructurer.swift */,
+						A1B2C3D4E5F601234567102A /* PromptFormattingEngine.swift */,
 					);
 			path = Services;
 			sourceTree = "<group>";
@@ -220,6 +237,7 @@
 			isa = PBXGroup;
 			children = (
 				A1B2C3D4E5F6012345671050 /* Assets.xcassets */,
+				A1B2C3D4E5F6012345671051 /* PromptingPlaybooks.md */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -239,6 +257,7 @@
 						A1B2C3D4E5F601234567106A /* ExportServiceTests.swift */,
 						A1B2C3D4E5F601234567106B /* StorageAndRepositoryTests.swift */,
 						A1B2C3D4E5F601234567106C /* AnalyticsTests.swift */,
+						A1B2C3D4E5F601234567106D /* PromptRestructurerTests.swift */,
 					);
 			path = DexCraftTests;
 			sourceTree = "<group>";
@@ -332,6 +351,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1B2C3D4E5F601234567500F /* Assets.xcassets in Resources */,
+				A1B2C3D4E5F6012345675042 /* PromptingPlaybooks.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -359,6 +379,7 @@
 				A1B2C3D4E5F6012345675008 /* WorkbenchTab.swift in Sources */,
 				A1B2C3D4E5F6012345675010 /* PromptOptimization.swift in Sources */,
 				A1B2C3D4E5F6012345675016 /* PromptLibraryModels.swift in Sources */,
+				A1B2C3D4E5F6012345675039 /* PromptProfile.swift in Sources */,
 				A1B2C3D4E5F6012345675009 /* StorageManager.swift in Sources */,
 				A1B2C3D4E5F6012345675011 /* OfflinePromptOptimizer.swift in Sources */,
 				A1B2C3D4E5F6012345675017 /* PromptLibraryRepository.swift in Sources */,
@@ -368,6 +389,8 @@
 						A1B2C3D4E5F601234567502B /* PromptBuilders.swift in Sources */,
 						A1B2C3D4E5F6012345675030 /* QualityCheckEngine.swift in Sources */,
 						A1B2C3D4E5F6012345675034 /* ExportService.swift in Sources */,
+						A1B2C3D4E5F6012345675040 /* PromptRestructurer.swift in Sources */,
+						A1B2C3D4E5F6012345675043 /* PromptFormattingEngine.swift in Sources */,
 						A1B2C3D4E5F601234567500A /* PromptEngineViewModel.swift in Sources */,
 				A1B2C3D4E5F601234567500B /* PrimaryPanelView.swift in Sources */,
 				A1B2C3D4E5F601234567500C /* ResultPanelView.swift in Sources */,
@@ -393,6 +416,11 @@
 						A1B2C3D4E5F6012345675036 /* ExportServiceTests.swift in Sources */,
 						A1B2C3D4E5F6012345675037 /* StorageAndRepositoryTests.swift in Sources */,
 						A1B2C3D4E5F6012345675038 /* AnalyticsTests.swift in Sources */,
+						A1B2C3D4E5F6012345675041 /* PromptRestructurerTests.swift in Sources */,
+						A1B2C3D4E5F6012345675044 /* PromptFormattingEngine.swift in Sources */,
+						A1B2C3D4E5F6012345675045 /* PromptRestructurer.swift in Sources */,
+						A1B2C3D4E5F6012345675046 /* PromptProfile.swift in Sources */,
+						A1B2C3D4E5F6012345675047 /* EnhancementOptions.swift in Sources */,
 						A1B2C3D4E5F6012345675019 /* PromptLibraryModels.swift in Sources */,
 						A1B2C3D4E5F6012345675033 /* QualityCheck.swift in Sources */,
 						A1B2C3D4E5F6012345675020 /* PromptLibraryRepository.swift in Sources */,

@@ -74,6 +74,7 @@ final class PromptEngineViewModel: ObservableObject {
     @Published private(set) var promptLibraryCategories: [PromptCategory] = []
     @Published private(set) var promptLibraryTags: [PromptTag] = []
     @Published private(set) var promptLibraryPrompts: [PromptLibraryItem] = []
+    @Published private(set) var connectedModelSettings: ConnectedModelSettings = ConnectedModelSettings()
     @Published var draftGoal: String = ""
     @Published var draftContext: String = ""
     @Published var draftConstraintsText: String = ""
@@ -86,14 +87,7 @@ final class PromptEngineViewModel: ObservableObject {
     private let storageManager: StorageManager
     private let promptLibraryRepository: PromptLibraryRepository
     private let offlinePromptOptimizer = OfflinePromptOptimizer()
-    private let variableRegex: NSRegularExpression = {
-        do {
-            return try NSRegularExpression(pattern: #"\{([a-zA-Z0-9_\-]+)\}"#)
-        } catch {
-            NSLog("DexCraft: variable regex compilation failed: \(error.localizedDescription)")
-            return try! NSRegularExpression(pattern: "(?!)") // matches nothing
-        }
-    }()
+    private let variableRegex: NSRegularExpression = PromptEngineViewModel.compileVariableRegex()
 
     private let noFillerConstraint = "Respond only with the requested output. Do not apologize or use conversational filler."
     private let markdownConstraint = "Use strict markdown structure and headings exactly as specified."
@@ -153,6 +147,7 @@ final class PromptEngineViewModel: ObservableObject {
     ) {
         self.storageManager = storageManager
         self.promptLibraryRepository = promptLibraryRepository
+        connectedModelSettings = storageManager.loadConnectedModelSettings()
         templates = storageManager.loadTemplates()
         history = storageManager.loadHistory()
 
@@ -176,6 +171,11 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         refreshPromptLibraryState()
+    }
+
+    func updateConnectedModelSettings(_ settings: ConnectedModelSettings) {
+        connectedModelSettings = settings
+        storageManager.saveConnectedModelSettings(settings)
     }
 
     var qualityChecks: [QualityCheck] {
@@ -611,6 +611,19 @@ final class PromptEngineViewModel: ObservableObject {
         promptLibraryPrompts = promptLibraryRepository.prompts
     }
 
+    private static func compileVariableRegex() -> NSRegularExpression {
+        do {
+            return try NSRegularExpression(pattern: #"\{([a-zA-Z0-9_\-]+)\}"#)
+        } catch {
+            NSLog("DexCraft: variable regex compilation failed: \(error.localizedDescription)")
+            do {
+                return try NSRegularExpression(pattern: "(?!)")
+            } catch {
+                fatalError("DexCraft: failed to compile match-nothing regex fallback: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func parseStructuredList(from text: String) -> [String] {
         text.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -656,178 +669,22 @@ final class PromptEngineViewModel: ObservableObject {
         return output
     }
 
-    private struct PromptSections {
-        var goal: String
-        var context: String
-        var constraints: [String]
-        var deliverables: [String]
-    }
-
-    private enum SectionKind {
-        case goal
-        case context
-        case constraints
-        case deliverables
-    }
-
     private func buildPrompt(from input: String) -> String {
-        let sections = parseSections(from: input)
-
-        let baseConstraints = buildConstraintLines(target: selectedTarget)
-        let baseDeliverables = buildDeliverablesLines(target: selectedTarget)
-
-        let constraints = dedupePreservingOrder(sections.constraints + baseConstraints)
-        let deliverables = dedupePreservingOrder(sections.deliverables + baseDeliverables)
-
-        switch selectedTarget {
-        case .claude:
-            return buildClaudePrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
-        case .agenticIDE:
-            return buildAgenticIDEPrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
-        case .perplexity:
-            return buildPerplexityPrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
-        case .geminiChatGPT:
-            return buildGeminiChatGPTPrompt(goal: sections.goal, context: sections.context, constraints: constraints, deliverables: deliverables)
-        }
-    }
-
-    private func parseSections(from input: String) -> PromptSections {
-        let normalized = input
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-
-        let lines = normalized
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-
-        var currentSection: SectionKind?
-        var goalLines: [String] = []
-        var contextLines: [String] = []
-        var constraintLines: [String] = []
-        var deliverableLines: [String] = []
-        var unsectioned: [String] = []
-
-        for rawLine in lines {
-            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-
-            if let (section, inline) = detectSectionHeader(in: trimmed) {
-                currentSection = section
-                if let inline, !inline.isEmpty {
-                    appendLine(inline, to: section, goal: &goalLines, context: &contextLines, constraints: &constraintLines, deliverables: &deliverableLines)
-                }
-                continue
-            }
-
-            if let currentSection {
-                appendLine(trimmed, to: currentSection, goal: &goalLines, context: &contextLines, constraints: &constraintLines, deliverables: &deliverableLines)
-            } else {
-                unsectioned.append(trimmed)
-            }
-        }
-
-        var goal = goalLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        var context = contextLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // IMPORTANT: NEVER set context to the entire input as a fallback.
-        // If no explicit sections exist: first line = goal, remainder = context.
-        if goal.isEmpty, let first = unsectioned.first {
-            goal = first
-            context = unsectioned.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        if goal.isEmpty {
-            goal = "Define and complete the requested task precisely."
-        }
-
-        return PromptSections(
-            goal: goal,
-            context: context,
-            constraints: normalizeBullets(constraintLines),
-            deliverables: normalizeBullets(deliverableLines)
+        PromptFormattingEngine.buildPrompt(
+            input: input,
+            target: selectedTarget,
+            options: options,
+            connectedModelSettings: connectedModelSettings
         )
     }
 
-    private func detectSectionHeader(in line: String) -> (SectionKind, String?)? {
-        var candidate = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func contextForTarget(profile: PromptProfile, baseContext: String, requirements: [String]) -> String {
+        guard !requirements.isEmpty else { return baseContext }
 
-        while candidate.hasPrefix("#") { candidate.removeFirst() }
-        candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let (header, inline) = splitHeader(candidate)
-        let key = header.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !key.isEmpty else { return nil }
-
-        let goalKeys: Set<String> = ["goal", "objective", "task", "mission", "request"]
-        let contextKeys: Set<String> = ["context", "background", "notes", "details"]
-        let constraintKeys: Set<String> = ["constraints", "constraint", "rules", "requirements", "guardrails"]
-        let deliverableKeys: Set<String> = ["deliverables", "deliverable", "outputs", "output", "results", "return", "returns"]
-
-        if goalKeys.contains(key) { return (.goal, inline) }
-        if contextKeys.contains(key) { return (.context, inline) }
-        if constraintKeys.contains(key) { return (.constraints, inline) }
-        if deliverableKeys.contains(key) { return (.deliverables, inline) }
-
-        return nil
-    }
-
-    private func splitHeader(_ line: String) -> (String, String?) {
-        if let colonIndex = line.firstIndex(of: ":") {
-            let header = String(line[..<colonIndex])
-            let remainder = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            return (header, remainder.isEmpty ? nil : remainder)
+        switch profile.formatStyle {
+        case .claudeXML, .markdownHeadings, .agenticIDE, .perplexitySearch:
+            return baseContext
         }
-        if let range = line.range(of: " - ") {
-            let header = String(line[..<range.lowerBound])
-            let remainder = String(line[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            return (header, remainder.isEmpty ? nil : remainder)
-        }
-        return (line, nil)
-    }
-
-    private func appendLine(
-        _ line: String,
-        to section: SectionKind,
-        goal: inout [String],
-        context: inout [String],
-        constraints: inout [String],
-        deliverables: inout [String]
-    ) {
-        switch section {
-        case .goal: goal.append(line)
-        case .context: context.append(line)
-        case .constraints: constraints.append(line)
-        case .deliverables: deliverables.append(line)
-        }
-    }
-
-    private func normalizeBullets(_ lines: [String]) -> [String] {
-        var output: [String] = []
-        for rawLine in lines {
-            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else { continue }
-
-            for prefix in ["- ", "* ", "• ", "– ", "— "] {
-                if line.hasPrefix(prefix) { line.removeFirst(prefix.count); break }
-            }
-
-            if let first = line.first, first.isNumber {
-                var index = line.startIndex
-                while index < line.endIndex, line[index].isNumber { index = line.index(after: index) }
-                if index < line.endIndex {
-                    let delim = line[index]
-                    if delim == "." || delim == ")" {
-                        index = line.index(after: index)
-                        if index < line.endIndex, line[index] == " " { index = line.index(after: index) }
-                        line = String(line[index...])
-                    }
-                }
-            }
-
-            line = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !line.isEmpty { output.append(line) }
-        }
-        return dedupePreservingOrder(output)
     }
 
     private func dedupePreservingOrder(_ lines: [String]) -> [String] {
@@ -855,72 +712,145 @@ final class PromptEngineViewModel: ObservableObject {
         }
     }
 
-    private func buildClaudePrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
-        """
-        <objective>
-        \(goal)
-        </objective>
+    private func buildClaudePrompt(
+        goal: String,
+        context: String,
+        requirements: [String],
+        constraints: [String],
+        deliverables: [String],
+        profile: PromptProfile
+    ) -> String {
+        var sections: [String] = []
 
-        <context>
-        \(context.isEmpty ? "No additional context provided." : context)
-        </context>
+        sections.append("<provider>\(profile.provider)</provider>")
+        sections.append("<connected_model>\(connectedModelLabel(for: profile))</connected_model>")
+        sections.append("<system_preamble>\n\(bulletize(profile.defaultSystemPreambleLines))\n</system_preamble>")
+        sections.append("<objective>\n\(goal)\n</objective>")
+        sections.append("<context>\n\(context.isEmpty ? "No additional context provided." : context)\n</context>")
 
-        <constraints>
-        \(bulletize(constraints))
-        </constraints>
+        if !requirements.isEmpty {
+            sections.append("<requirements>\n\(bulletize(requirements))\n</requirements>")
+        }
 
-        <deliverables>
-        \(bulletize(deliverables))
-        </deliverables>
-        """
+        sections.append("<constraints>\n\(bulletize(constraints))\n</constraints>")
+        sections.append("<deliverables>\n\(bulletize(deliverables))\n</deliverables>")
+        sections.append("<output_contract>\n\(bulletize(profile.outputContractLines))\n</output_contract>")
+        sections.append("<pitfalls_to_avoid>\n\(bulletize(profile.pitfallsAvoidLines))\n</pitfalls_to_avoid>")
+        sections.append("<tactics>\n\(bulletize(profile.tacticsLines))\n</tactics>")
+
+        return sections.joined(separator: "\n\n")
     }
 
-    private func buildAgenticIDEPrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
-        """
-        ### Goal
-        \(goal)
+    private func buildAgenticIDEPrompt(
+        goal: String,
+        context: String,
+        requirements: [String],
+        constraints: [String],
+        deliverables: [String],
+        profile: PromptProfile
+    ) -> String {
+        var sections: [String] = []
 
-        ### Context
-        \(context.isEmpty ? "No additional context provided." : context)
+        sections.append(section(title: "Provider", body: profile.provider))
+        sections.append(section(title: "Connected Model", body: connectedModelLabel(for: profile)))
+        sections.append(section(title: "System Preamble", body: bulletize(profile.defaultSystemPreambleLines)))
+        sections.append(section(title: "Goal", body: goal))
+        sections.append(section(title: "Context", body: context.isEmpty ? "No additional context provided." : context))
 
-        ### Constraints
-        \(bulletize(constraints))
+        if !requirements.isEmpty {
+            sections.append(section(title: "Requirements", body: bulletize(requirements)))
+        }
 
-        ### Deliverables
-        \(bulletize(deliverables))
-        """
+        sections.append(section(title: "Constraints", body: bulletize(constraints)))
+        sections.append(section(title: "Deliverables", body: bulletize(deliverables)))
+        sections.append(section(title: "Plan", body: bulletize(profile.tacticsLines)))
+        sections.append(section(title: "Unified Diff", body: "- Provide a concise, file-scoped unified diff summary."))
+        sections.append(section(title: "Tests", body: "- List deterministic test cases and expected outcomes."))
+        sections.append(section(title: "Validation", body: bulletize(profile.outputContractLines)))
+        sections.append(section(title: "Build/Run Commands", body: "- List commands in execution order."))
+        sections.append(section(title: "Git/Revert Plan", body: bulletize(profile.pitfallsAvoidLines)))
+
+        return sections.joined(separator: "\n\n")
     }
 
-    private func buildPerplexityPrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
-        """
-        ### Goal
-        \(goal)
+    private func buildPerplexityPrompt(
+        goal: String,
+        context: String,
+        requirements: [String],
+        constraints: [String],
+        deliverables: [String],
+        profile: PromptProfile
+    ) -> String {
+        var sections: [String] = []
 
-        ### Context
-        \(context.isEmpty ? "No additional context provided." : context)
+        sections.append(section(title: "Provider", body: profile.provider))
+        sections.append(section(title: "Connected Model", body: connectedModelLabel(for: profile)))
+        sections.append(section(title: "System Preamble", body: bulletize(profile.defaultSystemPreambleLines)))
+        sections.append(section(title: "Goal", body: goal))
+        sections.append(section(title: "Context", body: context.isEmpty ? "No additional context provided." : context))
 
-        ### Constraints
-        \(bulletize(constraints))
+        if !requirements.isEmpty {
+            sections.append(section(title: "Requirements", body: bulletize(requirements)))
+        }
 
-        ### Deliverables
-        \(bulletize(deliverables))
-        """
+        sections.append(section(title: "Constraints", body: bulletize(constraints)))
+        sections.append(section(title: "Deliverables", body: bulletize(deliverables)))
+        sections.append(
+            section(
+                title: "Search & Verification Requirements",
+                body: bulletize([
+                    "Search for primary sources before final synthesis.",
+                    "Cite sources inline as markdown links for factual claims.",
+                    "If evidence conflicts, summarize the conflict and confidence."
+                ])
+            )
+        )
+        sections.append(section(title: "Output Contract", body: bulletize(profile.outputContractLines)))
+        sections.append(section(title: "Pitfalls to Avoid", body: bulletize(profile.pitfallsAvoidLines)))
+        sections.append(section(title: "Tactics", body: bulletize(profile.tacticsLines)))
+
+        return sections.joined(separator: "\n\n")
     }
 
-    private func buildGeminiChatGPTPrompt(goal: String, context: String, constraints: [String], deliverables: [String]) -> String {
-        """
-        ### Goal
-        \(goal)
+    private func buildGeminiChatGPTPrompt(
+        goal: String,
+        context: String,
+        requirements: [String],
+        constraints: [String],
+        deliverables: [String],
+        profile: PromptProfile
+    ) -> String {
+        var outputContractLines = profile.outputContractLines
+        if options.noConversationalFiller {
+            outputContractLines.append("Respond only with the requested sections.")
+        }
 
-        ### Context
-        \(context.isEmpty ? "No additional context provided." : context)
+        var sections: [String] = []
+        sections.append(section(title: "Provider", body: profile.provider))
+        sections.append(section(title: "Connected Model", body: connectedModelLabel(for: profile)))
+        sections.append(section(title: "System Preamble", body: bulletize(profile.defaultSystemPreambleLines)))
+        sections.append(section(title: "Goal", body: goal))
+        sections.append(section(title: "Context", body: context.isEmpty ? "No additional context provided." : context))
 
-        ### Constraints
-        \(bulletize(constraints))
+        if !requirements.isEmpty {
+            sections.append(section(title: "Requirements", body: bulletize(requirements)))
+        }
 
-        ### Deliverables
-        \(bulletize(deliverables))
-        """
+        sections.append(section(title: "Constraints", body: bulletize(constraints)))
+        sections.append(section(title: "Deliverables", body: bulletize(deliverables)))
+        sections.append(section(title: "Output Contract", body: bulletize(outputContractLines)))
+        sections.append(section(title: "Pitfalls to Avoid", body: bulletize(profile.pitfallsAvoidLines)))
+        sections.append(section(title: "Tactics", body: bulletize(profile.tacticsLines)))
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    private func connectedModelLabel(for profile: PromptProfile) -> String {
+        if profile.modelNames.isEmpty {
+            return ConnectedModelSettings.unknownUnsetLabel
+        }
+
+        return profile.modelNames.joined(separator: ", ")
     }
 
     private func parseInputSections(from input: String) -> ParsedPromptInput {

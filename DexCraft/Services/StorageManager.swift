@@ -4,6 +4,7 @@ final class StorageManager {
     private enum StorageFile: String {
         case templates = "templates.json"
         case history = "history.json"
+        case connectedModelSettings = "connected-model-settings.json"
     }
 
     private let fileManager = FileManager.default
@@ -42,6 +43,14 @@ final class StorageManager {
     func saveHistory(_ history: [PromptHistoryEntry]) {
         let capped = Array(history.prefix(50))
         save(capped, to: .history)
+    }
+
+    func loadConnectedModelSettings() -> ConnectedModelSettings {
+        load(ConnectedModelSettings.self, from: .connectedModelSettings) ?? ConnectedModelSettings()
+    }
+
+    func saveConnectedModelSettings(_ settings: ConnectedModelSettings) {
+        save(settings, to: .connectedModelSettings)
     }
 
     private func ensureAppSupportDirectory() {
