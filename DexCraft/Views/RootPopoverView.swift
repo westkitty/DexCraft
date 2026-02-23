@@ -32,12 +32,23 @@ struct RootPopoverView: View {
 
             LinearGradient(
                 colors: [
-                    Color.white.opacity(0.12),
-                    Color.cyan.opacity(0.08),
-                    Color.black.opacity(0.22)
+                    Color.white.opacity(0.10),
+                    Color.cyan.opacity(0.07),
+                    Color.black.opacity(0.12)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            RadialGradient(
+                colors: [
+                    Color.white.opacity(0.12),
+                    Color.clear
+                ],
+                center: .center,
+                startRadius: 20,
+                endRadius: 280
             )
             .ignoresSafeArea()
 
@@ -45,8 +56,9 @@ struct RootPopoverView: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
-                .frame(width: 360, height: 360)
-                .opacity(0.24)
+                .frame(width: 420, height: 420)
+                .opacity(0.36)
+                .blendMode(.screen)
                 .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
                 .allowsHitTesting(false)
         }

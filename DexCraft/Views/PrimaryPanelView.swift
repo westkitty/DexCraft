@@ -110,6 +110,7 @@ struct PrimaryPanelView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassInset(cornerRadius: 8)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -125,15 +126,16 @@ struct PrimaryPanelView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassInset(cornerRadius: 8)
                 }
 
                 HStack(spacing: 8) {
-                    Text("Legacy formatting: \(viewModel.selectedTarget.segmentTitle)")
+                    Text("Output style: \(viewModel.selectedTarget.segmentTitle)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer()
-                    Menu("Adjust") {
+                    Menu("Change") {
                         ForEach(PromptTarget.allCases) { target in
                             Button(target.rawValue) {
                                 viewModel.selectedTarget = target
@@ -142,8 +144,7 @@ struct PrimaryPanelView: View {
                     }
                 }
                 .padding(8)
-                .background(Color.white.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .glassInset(cornerRadius: 8)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Target Environment")
@@ -158,6 +159,7 @@ struct PrimaryPanelView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassInset(cornerRadius: 8)
                 }
             }
         }
@@ -181,7 +183,15 @@ struct PrimaryPanelView: View {
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.black.opacity(0.2))
+                    .fill(.thinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                    )
 
                 TransparentTextEditor(text: $viewModel.roughInput)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -215,8 +225,7 @@ struct PrimaryPanelView: View {
                     .frame(height: 44)
                     .scrollContentBackground(.hidden)
                     .padding(6)
-                    .background(Color.black.opacity(0.2))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .glassInset(cornerRadius: 8)
             }
 
             Group {
@@ -228,8 +237,7 @@ struct PrimaryPanelView: View {
                     .frame(height: 56)
                     .scrollContentBackground(.hidden)
                     .padding(6)
-                    .background(Color.black.opacity(0.2))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .glassInset(cornerRadius: 8)
             }
 
             HStack(alignment: .top, spacing: 8) {
@@ -242,8 +250,7 @@ struct PrimaryPanelView: View {
                         .frame(height: 66)
                         .scrollContentBackground(.hidden)
                         .padding(6)
-                        .background(Color.black.opacity(0.2))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .glassInset(cornerRadius: 8)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -255,8 +262,7 @@ struct PrimaryPanelView: View {
                         .frame(height: 66)
                         .scrollContentBackground(.hidden)
                         .padding(6)
-                        .background(Color.black.opacity(0.2))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .glassInset(cornerRadius: 8)
                 }
             }
 
@@ -282,8 +288,7 @@ struct PrimaryPanelView: View {
                     .padding(10)
             }
             .frame(height: 170)
-            .background(Color.black.opacity(0.22))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .glassInset(cornerRadius: 10)
         }
         .padding(10)
         .glassCard()
@@ -357,6 +362,9 @@ struct PrimaryPanelView: View {
             } label: {
                 Label("Configure Enhancements (\(viewModel.options.activeConstraintCount) active)", systemImage: "slider.horizontal.3")
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .glassInset(cornerRadius: 8)
             }
             .menuStyle(.borderlessButton)
 
@@ -394,6 +402,7 @@ struct PrimaryPanelView: View {
             }
             .disabled(viewModel.templates.isEmpty)
             .menuStyle(.borderlessButton)
+            .glassInset(cornerRadius: 8)
 
             Text("Use the manager pop-up for full template editing and scrolling.")
                 .font(.caption2)
@@ -849,6 +858,10 @@ private struct GlassCardModifier: ViewModifier {
                     .fill(.ultraThinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(Color.white.opacity(0.02))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                             .stroke(Color.white.opacity(0.15), lineWidth: 1)
                     )
             )
@@ -858,5 +871,20 @@ private struct GlassCardModifier: ViewModifier {
 private extension View {
     func glassCard(cornerRadius: CGFloat = 10) -> some View {
         modifier(GlassCardModifier(cornerRadius: cornerRadius))
+    }
+
+    func glassInset(cornerRadius: CGFloat = 8) -> some View {
+        background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(.thinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(Color.white.opacity(0.03))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                )
+        )
     }
 }
