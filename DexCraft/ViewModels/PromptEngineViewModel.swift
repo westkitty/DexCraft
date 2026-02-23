@@ -39,6 +39,9 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     @Published var selectedTarget: PromptTarget = .claude
+    @Published var selectedModelFamily: ModelFamily = .openAIGPTStyle
+    @Published var selectedScenarioProfile: ScenarioProfile = .ideCodingAssistant
+    @Published var autoOptimizePrompt: Bool = true
     @Published var roughInput: String = "" {
         didSet { syncVariables() }
     }
@@ -57,6 +60,12 @@ final class PromptEngineViewModel: ObservableObject {
     @Published var templateNameDraft: String = ""
     @Published var preferredIDEExportFormat: IDEExportFormat = .cursorRules
     @Published private(set) var isDetachedWindowActive: Bool = false
+    @Published private(set) var optimizationAppliedRules: [String] = []
+    @Published private(set) var optimizationWarnings: [String] = []
+    @Published private(set) var optimizationSystemPreamble: String?
+    @Published private(set) var optimizationSuggestedTemperature: Double?
+    @Published private(set) var optimizationSuggestedTopP: Double?
+    @Published private(set) var optimizationSuggestedMaxTokens: Int?
 
     @Published private(set) var templates: [PromptTemplate] = []
     @Published private(set) var history: [PromptHistoryEntry] = []
@@ -65,6 +74,7 @@ final class PromptEngineViewModel: ObservableObject {
     var onDetachedWindowToggleRequested: (() -> Void)?
 
     private let storageManager: StorageManager
+    private let offlinePromptOptimizer = OfflinePromptOptimizer()
     private let variableRegex = try? NSRegularExpression(pattern: #"\{([a-zA-Z0-9_\-]+)\}"#)
 
     private let noFillerConstraint = "Respond only with the requested output. Do not apologize or use conversational filler."
@@ -72,6 +82,7 @@ final class PromptEngineViewModel: ObservableObject {
     private let strictCodeConstraint = "Output strict code or configuration only when code is requested."
 
     private var lastCanonicalPrompt: CanonicalPrompt?
+    private var lastOptimizationOutput: OptimizationOutput?
 
     private enum InputSectionKey {
         case assumptions
@@ -147,6 +158,32 @@ final class PromptEngineViewModel: ObservableObject {
     var qualityChecks: [QualityCheck] {
         let variablesComplete = detectedVariables.allSatisfy {
             !(variableValues[$0] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        if autoOptimizePrompt {
+            guard let output = lastOptimizationOutput, !generatedPrompt.isEmpty else {
+                return [
+                    QualityCheck(title: "Optimized Prompt Present", passed: false),
+                    QualityCheck(title: "Applied Rules Present", passed: false),
+                    QualityCheck(title: "Variables Filled", passed: variablesComplete)
+                ]
+            }
+
+            let hasPrompt = !output.optimizedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let hasRules = !output.appliedRules.isEmpty
+            let hasCLIConstraints = selectedScenarioProfile != .cliAssistant || output.optimizedPrompt.localizedCaseInsensitiveContains("copy/paste")
+            let hasJSONContract = selectedScenarioProfile != .jsonStructuredOutput || output.optimizedPrompt.localizedCaseInsensitiveContains("json")
+            let hasToolFallback = selectedScenarioProfile != .toolUsingAgent ||
+                output.appliedRules.contains(where: { $0.localizedCaseInsensitiveContains("tool") })
+
+            return [
+                QualityCheck(title: "Optimized Prompt Present", passed: hasPrompt),
+                QualityCheck(title: "Applied Rules Present", passed: hasRules),
+                QualityCheck(title: "CLI Constraints Applied", passed: hasCLIConstraints),
+                QualityCheck(title: "JSON Contract Applied", passed: hasJSONContract),
+                QualityCheck(title: "Tool Strategy Applied", passed: hasToolFallback),
+                QualityCheck(title: "Variables Filled", passed: variablesComplete)
+            ]
         }
 
         guard let canonical = lastCanonicalPrompt, !generatedPrompt.isEmpty else {
@@ -230,8 +267,30 @@ final class PromptEngineViewModel: ObservableObject {
 
         let parsed = parseInputSections(from: resolvedInput)
         let canonical = buildCanonicalPrompt(from: parsed, target: selectedTarget)
+        let basePrompt = renderPrompt(target: selectedTarget, canonical: canonical)
 
-        generatedPrompt = renderPrompt(target: selectedTarget, canonical: canonical)
+        if autoOptimizePrompt {
+            let output = offlinePromptOptimizer.optimize(
+                OptimizationInput(
+                    rawUserPrompt: resolvedInput,
+                    modelFamily: selectedModelFamily,
+                    scenario: selectedScenarioProfile,
+                    userOverrides: nil
+                )
+            )
+            lastOptimizationOutput = output
+            optimizationAppliedRules = output.appliedRules
+            optimizationWarnings = output.warnings
+            optimizationSystemPreamble = output.systemPreamble
+            optimizationSuggestedTemperature = output.suggestedTemperature
+            optimizationSuggestedTopP = output.suggestedTopP
+            optimizationSuggestedMaxTokens = output.suggestedMaxTokens
+            generatedPrompt = renderOptimizationPackage(basePrompt: basePrompt, output: output)
+        } else {
+            generatedPrompt = basePrompt
+            clearOptimizationMetadata()
+        }
+
         lastCanonicalPrompt = canonical
         isResultPanelVisible = true
 
@@ -254,6 +313,34 @@ final class PromptEngineViewModel: ObservableObject {
         pasteboard.clearContents()
         pasteboard.setString(generatedPrompt, forType: .string)
         statusMessage = "Prompt copied to clipboard."
+    }
+
+    func exportOptimizedPromptAsMarkdown() {
+        guard !generatedPrompt.isEmpty else {
+            statusMessage = "Forge a prompt before exporting."
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "dexcraft-optimized-prompt.md"
+        panel.canCreateDirectories = true
+
+        if #available(macOS 11.0, *) {
+            if let contentType = UTType(filenameExtension: "md") {
+                panel.allowedContentTypes = [contentType]
+            }
+        } else {
+            panel.allowedFileTypes = ["md"]
+        }
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try generatedPrompt.write(to: url, atomically: true, encoding: .utf8)
+                statusMessage = "Exported: \(url.path)"
+            } catch {
+                statusMessage = "Export failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     func exportForIDE(_ format: IDEExportFormat) {
@@ -338,6 +425,7 @@ final class PromptEngineViewModel: ObservableObject {
 
         let parsed = parseInputSections(from: resolvedInput)
         lastCanonicalPrompt = buildCanonicalPrompt(from: parsed, target: selectedTarget)
+        clearOptimizationMetadata()
 
         isResultPanelVisible = true
         statusMessage = "Loaded history entry."
@@ -392,6 +480,21 @@ final class PromptEngineViewModel: ObservableObject {
 
     func setDetachedWindowActive(_ active: Bool) {
         isDetachedWindowActive = active
+    }
+
+    var optimizationParameterSummary: String {
+        guard autoOptimizePrompt else {
+            return "Auto-optimize is disabled."
+        }
+
+        guard lastOptimizationOutput != nil else {
+            return "No optimizer suggestions available."
+        }
+
+        let temperature = optimizationSuggestedTemperature.map { String(format: "%.2f", $0) } ?? "n/a"
+        let topP = optimizationSuggestedTopP.map { String(format: "%.2f", $0) } ?? "n/a"
+        let maxTokens = optimizationSuggestedMaxTokens.map(String.init) ?? "n/a"
+        return "temperature=\(temperature), top_p=\(topP), max_tokens=\(maxTokens)"
     }
 
     private func syncVariables() {
@@ -1123,5 +1226,50 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         return count
+    }
+
+    private func renderOptimizationPackage(basePrompt: String, output: OptimizationOutput) -> String {
+        var sections: [String] = []
+        sections.append("### Model Family")
+        sections.append(selectedModelFamily.rawValue)
+        sections.append("")
+        sections.append("### Scenario")
+        sections.append(selectedScenarioProfile.rawValue)
+        sections.append("")
+
+        if let systemPreamble = output.systemPreamble, !systemPreamble.isEmpty {
+            sections.append("### System Preamble")
+            sections.append(systemPreamble)
+            sections.append("")
+        }
+
+        sections.append("### Optimized Prompt")
+        sections.append(output.optimizedPrompt)
+        sections.append("")
+        sections.append("### Suggested Parameters")
+        sections.append("- temperature: \(output.suggestedTemperature.map { String(format: "%.2f", $0) } ?? "n/a")")
+        sections.append("- top_p: \(output.suggestedTopP.map { String(format: "%.2f", $0) } ?? "n/a")")
+        sections.append("- max_tokens: \(output.suggestedMaxTokens.map(String.init) ?? "n/a")")
+        sections.append("")
+        sections.append("### Applied Rules")
+        sections.append(output.appliedRules.isEmpty ? "- None" : bulletize(output.appliedRules))
+        sections.append("")
+        sections.append("### Warnings")
+        sections.append(output.warnings.isEmpty ? "- None" : bulletize(output.warnings))
+        sections.append("")
+        sections.append("### Legacy Canonical Draft")
+        sections.append(basePrompt)
+
+        return sections.joined(separator: "\n")
+    }
+
+    private func clearOptimizationMetadata() {
+        lastOptimizationOutput = nil
+        optimizationAppliedRules = []
+        optimizationWarnings = []
+        optimizationSystemPreamble = nil
+        optimizationSuggestedTemperature = nil
+        optimizationSuggestedTopP = nil
+        optimizationSuggestedMaxTokens = nil
     }
 }

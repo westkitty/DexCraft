@@ -6,7 +6,7 @@ struct ResultPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Forged Prompt")
+                Text(viewModel.autoOptimizePrompt ? "Optimized Prompt Preview" : "Forged Prompt")
                     .font(.headline)
                 Spacer()
                 Button("Hide") {
@@ -16,6 +16,7 @@ struct ResultPanelView: View {
             }
 
             qualityGate
+            optimizationSummary
 
             Toggle("Show Diff View", isOn: $viewModel.showDiff)
                 .toggleStyle(.switch)
@@ -47,6 +48,11 @@ struct ResultPanelView: View {
                     viewModel.copyToClipboard()
                 }
                 .buttonStyle(.borderedProminent)
+
+                Button("Export .md") {
+                    viewModel.exportOptimizedPromptAsMarkdown()
+                }
+                .buttonStyle(.bordered)
 
                 if viewModel.selectedTarget == .agenticIDE {
                     Menu("IDE Export") {
@@ -83,6 +89,45 @@ struct ResultPanelView: View {
                         .foregroundStyle(check.passed ? .green : .red)
                     Text(check.title)
                         .font(.caption)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var optimizationSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Offline Optimization")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Model: \(viewModel.selectedModelFamily.rawValue)")
+                .font(.caption)
+            Text("Scenario: \(viewModel.selectedScenarioProfile.rawValue)")
+                .font(.caption)
+            Text("Suggested Params: \(viewModel.optimizationParameterSummary)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            if !viewModel.optimizationAppliedRules.isEmpty {
+                Text("Applied Rules")
+                    .font(.caption.weight(.semibold))
+                    .padding(.top, 2)
+                ForEach(viewModel.optimizationAppliedRules, id: \.self) { rule in
+                    Text("• \(rule)")
+                        .font(.caption2)
+                }
+            }
+
+            if !viewModel.optimizationWarnings.isEmpty {
+                Text("Warnings")
+                    .font(.caption.weight(.semibold))
+                    .padding(.top, 2)
+                ForEach(viewModel.optimizationWarnings, id: \.self) { warning in
+                    Text("• \(warning)")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
                 }
             }
         }

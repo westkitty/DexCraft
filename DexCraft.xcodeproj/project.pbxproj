@@ -15,14 +15,30 @@
 		A1B2C3D4E5F6012345675006 /* PromptTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671013 /* PromptTemplate.swift */; };
 		A1B2C3D4E5F6012345675007 /* QualityCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671014 /* QualityCheck.swift */; };
 		A1B2C3D4E5F6012345675008 /* WorkbenchTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */; };
+		A1B2C3D4E5F6012345675010 /* PromptOptimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */; };
 		A1B2C3D4E5F6012345675009 /* StorageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671020 /* StorageManager.swift */; };
+		A1B2C3D4E5F6012345675011 /* OfflinePromptOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */; };
 		A1B2C3D4E5F601234567500A /* PromptEngineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */; };
 		A1B2C3D4E5F601234567500B /* PrimaryPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */; };
 		A1B2C3D4E5F601234567500C /* ResultPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671041 /* ResultPanelView.swift */; };
 		A1B2C3D4E5F601234567500D /* RootPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671042 /* RootPopoverView.swift */; };
 		A1B2C3D4E5F601234567500E /* TransparentTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671043 /* TransparentTextEditor.swift */; };
 		A1B2C3D4E5F601234567500F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671050 /* Assets.xcassets */; };
+		A1B2C3D4E5F6012345675012 /* OfflinePromptOptimizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671060 /* OfflinePromptOptimizerTests.swift */; };
+		A1B2C3D4E5F6012345675013 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671061 /* XCTest.framework */; };
+		A1B2C3D4E5F6012345675014 /* PromptOptimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */; };
+		A1B2C3D4E5F6012345675015 /* OfflinePromptOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A1B2C3D4E5F6012345676001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1B2C3D4E5F6012345678901 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1B2C3D4E5F6012345673001;
+			remoteInfo = DexCraft;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A1B2C3D4E5F6012345671001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -34,14 +50,19 @@
 		A1B2C3D4E5F6012345671013 /* PromptTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplate.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671014 /* QualityCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QualityCheck.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchTab.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptOptimization.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671020 /* StorageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManager.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflinePromptOptimizer.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEngineViewModel.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryPanelView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671041 /* ResultPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultPanelView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671042 /* RootPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootPopoverView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671043 /* TransparentTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransparentTextEditor.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671050 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671060 /* OfflinePromptOptimizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflinePromptOptimizerTests.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6012345671061 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		A1B2C3D4E5F60123456710FF /* DexCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DexCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1B2C3D4E5F6012345671100 /* DexCraftTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DexCraftTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +73,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1B2C3D4E5F6012345672004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1B2C3D4E5F6012345675013 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -59,6 +88,8 @@
 			isa = PBXGroup;
 			children = (
 				A1B2C3D4E5F6012345678904 /* DexCraft */,
+				A1B2C3D4E5F6012345678910 /* DexCraftTests */,
+				A1B2C3D4E5F6012345678911 /* Frameworks */,
 				A1B2C3D4E5F6012345678903 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -67,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				A1B2C3D4E5F60123456710FF /* DexCraft.app */,
+				A1B2C3D4E5F6012345671100 /* DexCraftTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -95,6 +127,7 @@
 				A1B2C3D4E5F6012345671013 /* PromptTemplate.swift */,
 				A1B2C3D4E5F6012345671014 /* QualityCheck.swift */,
 				A1B2C3D4E5F6012345671015 /* WorkbenchTab.swift */,
+				A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -103,6 +136,7 @@
 			isa = PBXGroup;
 			children = (
 				A1B2C3D4E5F6012345671020 /* StorageManager.swift */,
+				A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -134,6 +168,22 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		A1B2C3D4E5F6012345678910 /* DexCraftTests */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671060 /* OfflinePromptOptimizerTests.swift */,
+			);
+			path = DexCraftTests;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6012345678911 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F6012345671061 /* XCTest.framework */,
+			);
+			path = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -154,6 +204,24 @@
 			productReference = A1B2C3D4E5F60123456710FF /* DexCraft.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A1B2C3D4E5F6012345673002 /* DexCraftTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1B2C3D4E5F6012345674003 /* Build configuration list for PBXNativeTarget "DexCraftTests" */;
+			buildPhases = (
+				A1B2C3D4E5F6012345672005 /* Sources */,
+				A1B2C3D4E5F6012345672004 /* Frameworks */,
+				A1B2C3D4E5F6012345672006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A1B2C3D4E5F6012345677001 /* PBXTargetDependency */,
+			);
+			name = DexCraftTests;
+			productName = DexCraftTests;
+			productReference = A1B2C3D4E5F6012345671100 /* DexCraftTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -165,6 +233,10 @@
 				TargetAttributes = {
 					A1B2C3D4E5F6012345673001 = {
 						CreatedOnToolsVersion = 26.2;
+					};
+					A1B2C3D4E5F6012345673002 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = A1B2C3D4E5F6012345673001;
 					};
 				};
 			};
@@ -182,6 +254,7 @@
 			projectRoot = "";
 			targets = (
 				A1B2C3D4E5F6012345673001 /* DexCraft */,
+				A1B2C3D4E5F6012345673002 /* DexCraftTests */,
 			);
 		};
 /* End PBXProject section */
@@ -192,6 +265,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1B2C3D4E5F601234567500F /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1B2C3D4E5F6012345672006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -210,7 +290,9 @@
 				A1B2C3D4E5F6012345675006 /* PromptTemplate.swift in Sources */,
 				A1B2C3D4E5F6012345675007 /* QualityCheck.swift in Sources */,
 				A1B2C3D4E5F6012345675008 /* WorkbenchTab.swift in Sources */,
+				A1B2C3D4E5F6012345675010 /* PromptOptimization.swift in Sources */,
 				A1B2C3D4E5F6012345675009 /* StorageManager.swift in Sources */,
+				A1B2C3D4E5F6012345675011 /* OfflinePromptOptimizer.swift in Sources */,
 				A1B2C3D4E5F601234567500A /* PromptEngineViewModel.swift in Sources */,
 				A1B2C3D4E5F601234567500B /* PrimaryPanelView.swift in Sources */,
 				A1B2C3D4E5F601234567500C /* ResultPanelView.swift in Sources */,
@@ -219,7 +301,25 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1B2C3D4E5F6012345672005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1B2C3D4E5F6012345675012 /* OfflinePromptOptimizerTests.swift in Sources */,
+				A1B2C3D4E5F6012345675014 /* PromptOptimization.swift in Sources */,
+				A1B2C3D4E5F6012345675015 /* OfflinePromptOptimizer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A1B2C3D4E5F6012345677001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1B2C3D4E5F6012345673001 /* DexCraft */;
+			targetProxy = A1B2C3D4E5F6012345676001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A1B2C3D4E5F6012345674101 /* Debug */ = {
@@ -304,6 +404,48 @@
 			};
 			name = Release;
 		};
+		A1B2C3D4E5F6012345674301 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.andrew.dexcraft.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DexCraft.app/Contents/MacOS/DexCraft";
+			};
+			name = Debug;
+		};
+		A1B2C3D4E5F6012345674302 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.andrew.dexcraft.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DexCraft.app/Contents/MacOS/DexCraft";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -321,6 +463,15 @@
 			buildConfigurations = (
 				A1B2C3D4E5F6012345674201 /* Debug */,
 				A1B2C3D4E5F6012345674202 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1B2C3D4E5F6012345674003 /* Build configuration list for PBXNativeTarget "DexCraftTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1B2C3D4E5F6012345674301 /* Debug */,
+				A1B2C3D4E5F6012345674302 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

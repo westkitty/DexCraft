@@ -43,6 +43,7 @@ struct PrimaryPanelView: View {
             }
 
             targetPicker
+            optimizationSelectors
             roughInputEditor
 
             if !viewModel.detectedVariables.isEmpty {
@@ -76,7 +77,7 @@ struct PrimaryPanelView: View {
 
     private var targetPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Target Environment")
+            Text("Target Environment (Legacy Formatting)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -89,6 +90,47 @@ struct PrimaryPanelView: View {
             .labelsHidden()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var optimizationSelectors: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Model Family")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Model Family", selection: $viewModel.selectedModelFamily) {
+                    ForEach(ModelFamily.allCases) { family in
+                        Text(family.rawValue).tag(family)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Scenario / Use Case")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Scenario / Use Case", selection: $viewModel.selectedScenarioProfile) {
+                    ForEach(ScenarioProfile.allCases) { scenario in
+                        Text(scenario.rawValue).tag(scenario)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Toggle("Auto-optimize prompt", isOn: $viewModel.autoOptimizePrompt)
+                .toggleStyle(.switch)
+                .font(.caption)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var roughInputEditor: some View {
