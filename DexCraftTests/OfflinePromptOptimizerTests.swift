@@ -96,7 +96,55 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         XCTAssertTrue(result.optimizedText.contains("### Constraints"))
         XCTAssertTrue(result.optimizedText.contains("### Output Format"))
         XCTAssertTrue(result.optimizedText.contains("### Success Criteria"))
-        XCTAssertTrue(result.optimizedText.contains("### Questions"))
+        XCTAssertTrue(result.optimizedText.contains("### Deliverables"))
+    }
+
+    func testCreativeStoryPromptUpgradesGenericContractAndDeliverables() {
+        let input = """
+        ### Task
+        Write me a story about a dog.
+
+        ### Output Contract
+        - Return only the requested sections.
+        - Keep the response concise and execution-oriented.
+        - Avoid conversational filler.
+        - Do not include extra sections beyond this contract.
+        """
+
+        let result = HeuristicPromptOptimizer.optimize(
+            input,
+            context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
+        )
+
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("title, story"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("beginning, middle, and ending"))
+        XCTAssertFalse(result.optimizedText.localizedCaseInsensitiveContains("execution-oriented"))
+        XCTAssertFalse(result.optimizedText.localizedCaseInsensitiveContains("1. write me a story about a dog."))
+        XCTAssertFalse(result.optimizedText.contains("### Questions"))
+    }
+
+    func testGameDesignPromptGetsGameSpecificScaffold() {
+        let input = """
+        ### Task
+        Design a tic-tac-toe game where the X's and the O's are made of cats and dogs.
+
+        ### Output Contract
+        - Return only the requested sections.
+        - Keep the response concise and execution-oriented.
+        - Avoid conversational filler.
+        - Do not include extra sections beyond this contract.
+        """
+
+        let result = HeuristicPromptOptimizer.optimize(
+            input,
+            context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
+        )
+
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("concept, rules, visual theme"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("board setup"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("cats and dogs"))
+        XCTAssertFalse(result.optimizedText.localizedCaseInsensitiveContains("ordered implementation steps"))
+        XCTAssertFalse(result.optimizedText.contains("### Questions"))
     }
 
     func testGapDrivenStrongPromptAvoidsUnnecessaryExpansion() {
