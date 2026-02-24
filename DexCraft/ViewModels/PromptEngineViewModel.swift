@@ -51,11 +51,14 @@ final class PromptEngineViewModel: ObservableObject {
     @Published var activeTab: WorkbenchTab = .enhance
 
     @Published var generatedPrompt: String = ""
+    @Published private(set) var finalPrompt: String = ""
+    @Published private(set) var debugReport: String = ""
     @Published var resolvedInput: String = ""
     @Published var isResultPanelVisible: Bool = false {
         didSet { onRevealStateChanged?(isResultPanelVisible) }
     }
     @Published var showDiff: Bool = false
+    @Published var showDebugReport: Bool = false
     @Published var statusMessage: String = ""
     @Published var templateNameDraft: String = ""
     @Published var preferredIDEExportFormat: IDEExportFormat = .cursorRules
@@ -92,6 +95,11 @@ final class PromptEngineViewModel: ObservableObject {
     private let noFillerConstraint = "Respond only with the requested output. Do not apologize or use conversational filler."
     private let markdownConstraint = "Use strict markdown structure and headings exactly as specified."
     private let strictCodeConstraint = "Output strict code or configuration only when code is requested."
+    private let ambiguityLexicon: Set<String> = [
+        "maybe", "possibly", "perhaps", "some", "various", "several",
+        "generally", "roughly", "approximately", "kind", "stuff",
+        "things", "probably", "might", "could", "etc"
+    ]
 
     private var lastCanonicalPrompt: CanonicalPrompt?
     private var lastOptimizationOutput: OptimizationOutput?
@@ -139,6 +147,44 @@ final class PromptEngineViewModel: ObservableObject {
         var alternatives: [String]
         var validationSteps: [String]
         var revertPlan: [String]
+    }
+
+    private enum RewriteMode: String {
+        case minimal
+        case standard
+        case aggressive
+    }
+
+    private enum IRSectionKey {
+        case goalOrTask
+        case context
+        case constraints
+        case deliverables
+    }
+
+    private struct PromptIR {
+        let rawInput: String
+        let target: PromptTarget
+        let mode: RewriteMode
+        let goalOrTask: String
+        let context: String?
+        let constraints: [String]
+        let deliverables: [String]
+        let outputContract: [String]
+        let debugNotes: [String]
+    }
+
+    private struct ValidationMetrics {
+        let complianceScore: Double
+        let ambiguityIndex: Double?
+        let templateOverlap: Double?
+    }
+
+    private struct ValidationResult {
+        let isValid: Bool
+        let errors: [String]
+        let warnings: [String]
+        let metrics: ValidationMetrics
     }
 
     init(
@@ -243,12 +289,12 @@ final class PromptEngineViewModel: ObservableObject {
                 return normalized.contains("cite primary sources") || normalized.contains("verify facts")
             })
 
-        let hasClaudeXMLTags = selectedTarget != .claude || hasClaudeRequiredTags(in: generatedPrompt)
-        let hasAgenticBuildRun = selectedTarget != .agenticIDE || generatedPrompt.contains(heading("Build/Run Commands"))
-        let hasAgenticGitRevert = selectedTarget != .agenticIDE || generatedPrompt.contains(heading("Git/Revert Plan"))
-        let sectionOrderValid = selectedTarget == .claude
-            ? hasClaudeTagOrder(in: generatedPrompt)
-            : hasRequiredSectionOrder(in: generatedPrompt)
+        let hasClaudeXMLTags = selectedTarget != .claude ||
+            generatedPrompt.contains(heading("Task")) ||
+            generatedPrompt.contains(heading("Goal"))
+        let hasAgenticBuildRun = selectedTarget != .agenticIDE || generatedPrompt.contains(heading("Proposed File Changes"))
+        let hasAgenticGitRevert = selectedTarget != .agenticIDE || generatedPrompt.contains(heading("Validation Commands"))
+        let sectionOrderValid = hasRequiredSectionOrder(in: generatedPrompt)
 
         return [
             QualityCheck(title: "Assumptions Section Present", passed: hasAssumptions),
@@ -290,7 +336,53 @@ final class PromptEngineViewModel: ObservableObject {
 
         let parsed = parseInputSections(from: resolvedInput)
         let canonical = buildCanonicalPrompt(from: parsed, target: selectedTarget)
-        let basePrompt = buildPrompt(from: resolvedInput)
+        let mode = resolveRewriteMode(autoOptimize: autoOptimizePrompt, options: options)
+        let initialIR = parseRawInputToIR(
+            rawInput: resolvedInput,
+            target: selectedTarget,
+            mode: mode,
+            options: options
+        )
+        var selectedIR = initialIR
+        var fallbackNotes: [String] = ["Initial rewrite mode: \(mode.rawValue)"]
+        var compiledFinalPrompt = compileFinalPrompt(from: initialIR)
+        var validation = validate(finalPrompt: compiledFinalPrompt, ir: initialIR, options: options)
+
+        if !validation.isValid, mode != .minimal {
+            fallbackNotes.append("Validation failed in \(mode.rawValue); retrying with minimal mode.")
+            let minimalIR = parseRawInputToIR(
+                rawInput: resolvedInput,
+                target: selectedTarget,
+                mode: .minimal,
+                options: options
+            )
+            let minimalPrompt = compileFinalPrompt(from: minimalIR)
+            let minimalValidation = validate(finalPrompt: minimalPrompt, ir: minimalIR, options: options)
+
+            selectedIR = minimalIR
+            compiledFinalPrompt = minimalPrompt
+            validation = minimalValidation
+            fallbackNotes.append("Minimal mode validation: \(minimalValidation.isValid ? "passed" : "failed").")
+        }
+
+        if !validation.isValid {
+            fallbackNotes.append("Validation still failing; falling back to raw input.")
+            compiledFinalPrompt = resolvedInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            selectedIR = PromptIR(
+                rawInput: resolvedInput.trimmingCharacters(in: .whitespacesAndNewlines),
+                target: selectedTarget,
+                mode: .minimal,
+                goalOrTask: resolvedInput.trimmingCharacters(in: .whitespacesAndNewlines),
+                context: nil,
+                constraints: [],
+                deliverables: [],
+                outputContract: outputContractLines(for: selectedTarget, mode: .minimal, options: options),
+                debugNotes: ["Last-resort fallback to raw input after validation failure."]
+            )
+        }
+
+        finalPrompt = compiledFinalPrompt
+        generatedPrompt = compiledFinalPrompt
 
         if autoOptimizePrompt {
             let output = offlinePromptOptimizer.optimize(
@@ -308,10 +400,22 @@ final class PromptEngineViewModel: ObservableObject {
             optimizationSuggestedTemperature = output.suggestedTemperature
             optimizationSuggestedTopP = output.suggestedTopP
             optimizationSuggestedMaxTokens = output.suggestedMaxTokens
-            generatedPrompt = renderOptimizationPackage(basePrompt: basePrompt, output: output)
+            debugReport = renderDebugReport(
+                ir: selectedIR,
+                optimizationOutput: output,
+                finalPrompt: compiledFinalPrompt,
+                validationResult: validation,
+                fallbackNotes: fallbackNotes
+            )
         } else {
-            generatedPrompt = basePrompt
             clearOptimizationMetadata()
+            debugReport = renderDebugReport(
+                ir: selectedIR,
+                optimizationOutput: nil,
+                finalPrompt: compiledFinalPrompt,
+                validationResult: validation,
+                fallbackNotes: fallbackNotes
+            )
         }
 
         lastCanonicalPrompt = canonical
@@ -320,7 +424,7 @@ final class PromptEngineViewModel: ObservableObject {
         let entry = PromptHistoryEntry(
             target: selectedTarget,
             originalInput: roughInput,
-            generatedPrompt: generatedPrompt,
+            generatedPrompt: finalPrompt,
             options: options,
             variables: variableValues
         )
@@ -331,15 +435,17 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     func copyToClipboard() {
-        guard !generatedPrompt.isEmpty else { return }
+        let clipboardText = userVisiblePrompt
+        guard !clipboardText.isEmpty else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(generatedPrompt, forType: .string)
+        pasteboard.setString(clipboardText, forType: .string)
         statusMessage = "Prompt copied to clipboard."
     }
 
     func exportOptimizedPromptAsMarkdown() {
-        guard !generatedPrompt.isEmpty else {
+        let exportText = userVisiblePrompt
+        guard !exportText.isEmpty else {
             statusMessage = "Forge a prompt before exporting."
             return
         }
@@ -358,7 +464,7 @@ final class PromptEngineViewModel: ObservableObject {
 
         if panel.runModal() == .OK, let url = panel.url {
             do {
-                try generatedPrompt.write(to: url, atomically: true, encoding: .utf8)
+                try exportText.write(to: url, atomically: true, encoding: .utf8)
                 statusMessage = "Exported: \(url.path)"
             } catch {
                 statusMessage = "Export failed: \(error.localizedDescription)"
@@ -367,13 +473,15 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     func exportForIDE(_ format: IDEExportFormat) {
-        guard !generatedPrompt.isEmpty else {
+        let exportText = userVisiblePrompt
+        guard !exportText.isEmpty else {
             statusMessage = "Forge a prompt before exporting."
             return
         }
 
         if options.addFileTreeRequest,
-           !generatedPrompt.contains(heading("File Tree Request (Before Implementation Details)")) {
+           !userVisiblePrompt.contains(heading("File Tree Request (Before Implementation Details)")) &&
+           !userVisiblePrompt.contains(heading("Proposed File Changes")) {
             statusMessage = "Export blocked: File Tree Request section is missing."
             return
         }
@@ -392,7 +500,7 @@ final class PromptEngineViewModel: ObservableObject {
 
         if panel.runModal() == .OK, let url = panel.url {
             do {
-                try generatedPrompt.write(to: url, atomically: true, encoding: .utf8)
+                try exportText.write(to: url, atomically: true, encoding: .utf8)
                 statusMessage = "Exported: \(url.path)"
             } catch {
                 statusMessage = "Export failed: \(error.localizedDescription)"
@@ -444,7 +552,11 @@ final class PromptEngineViewModel: ObservableObject {
         options = entry.options
         variableValues = entry.variables
         resolvedInput = substituteVariables(in: roughInput)
-        generatedPrompt = entry.generatedPrompt
+        let trimmedStoredPrompt = entry.generatedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let restoredFinalPrompt = extractUserFacingPrompt(from: trimmedStoredPrompt)
+        finalPrompt = restoredFinalPrompt
+        generatedPrompt = restoredFinalPrompt
+        debugReport = restoredFinalPrompt == trimmedStoredPrompt ? "" : trimmedStoredPrompt
 
         let parsed = parseInputSections(from: resolvedInput)
         lastCanonicalPrompt = buildCanonicalPrompt(from: parsed, target: selectedTarget)
@@ -556,7 +668,7 @@ final class PromptEngineViewModel: ObservableObject {
         let original = resolvedInput
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
-        let enhanced = generatedPrompt
+        let enhanced = userVisiblePrompt
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
 
@@ -603,6 +715,20 @@ final class PromptEngineViewModel: ObservableObject {
         let topP = optimizationSuggestedTopP.map { String(format: "%.2f", $0) } ?? "n/a"
         let maxTokens = optimizationSuggestedMaxTokens.map(String.init) ?? "n/a"
         return "temperature=\(temperature), top_p=\(topP), max_tokens=\(maxTokens)"
+    }
+
+    var userVisiblePrompt: String {
+        if showDebugReport {
+            let trimmedDebugReport = debugReport.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedDebugReport.isEmpty {
+                return trimmedDebugReport
+            }
+            return generatedPrompt
+        }
+        if !finalPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return finalPrompt
+        }
+        return extractUserFacingPrompt(from: generatedPrompt)
     }
 
     private func refreshPromptLibraryState() {
@@ -670,12 +796,453 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     private func buildPrompt(from input: String) -> String {
-        PromptFormattingEngine.buildPrompt(
-            input: input,
-            target: selectedTarget,
-            options: options,
-            connectedModelSettings: connectedModelSettings
+        let mode = resolveRewriteMode(autoOptimize: autoOptimizePrompt, options: options)
+        let ir = parseRawInputToIR(rawInput: input, target: selectedTarget, mode: mode, options: options)
+        return compileFinalPrompt(from: ir)
+    }
+
+    private func resolveRewriteMode(autoOptimize: Bool, options: EnhancementOptions) -> RewriteMode {
+        if options.includeValidationSteps || options.includeRevertPlan || options.includeVerificationChecklist {
+            return .aggressive
+        }
+
+        if autoOptimize || options.enforceMarkdown || options.strictCodeOnly || options.noConversationalFiller {
+            return .standard
+        }
+
+        return .minimal
+    }
+
+    private func parseRawInputToIR(
+        rawInput: String,
+        target: PromptTarget,
+        mode: RewriteMode,
+        options: EnhancementOptions
+    ) -> PromptIR {
+        let trimmedInput = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = trimmedInput.components(separatedBy: .newlines)
+
+        var sections: [IRSectionKey: [String]] = [:]
+        var currentSection: IRSectionKey?
+        var hasStructuredSections = false
+        var debugNotes: [String] = []
+
+        for line in lines {
+            if let heading = detectIRHeading(in: line) {
+                currentSection = heading.key
+                hasStructuredSections = true
+                if !heading.inlineValue.isEmpty {
+                    sections[heading.key, default: []].append(heading.inlineValue)
+                }
+                continue
+            }
+
+            if let currentSection {
+                sections[currentSection, default: []].append(line)
+            }
+        }
+
+        let goalOrTask: String
+        let context: String?
+        let extractedDeliverables: [String]
+        let extractedConstraints: [String]
+
+        if hasStructuredSections {
+            debugNotes.append("Detected structured Goal/Context/Constraints/Deliverables headings.")
+            let parsedGoal = normalizeBlock(sections[.goalOrTask] ?? [])
+            goalOrTask = parsedGoal.isEmpty ? trimmedInput : parsedGoal
+
+            let parsedContext = normalizeBlock(sections[.context] ?? [])
+            context = parsedContext.isEmpty ? nil : parsedContext
+
+            if let constraintSection = sections[.constraints] {
+                extractedConstraints = parseListLines(from: constraintSection)
+                debugNotes.append("Extracted constraints from explicit Constraints section.")
+            } else {
+                extractedConstraints = extractConstraintLines(from: lines)
+                if !extractedConstraints.isEmpty {
+                    debugNotes.append("No Constraints section found; extracted directive-style constraint lines.")
+                }
+            }
+
+            extractedDeliverables = parseListLines(from: sections[.deliverables])
+        } else {
+            goalOrTask = trimmedInput
+            context = nil
+            extractedConstraints = extractConstraintLines(from: lines)
+            extractedDeliverables = []
+            debugNotes.append("No structured headings found; using full input as task.")
+            if !extractedConstraints.isEmpty {
+                debugNotes.append("Extracted directive-style constraint lines from unstructured input.")
+            }
+        }
+
+        let dedupedConstraints = dedupeCaseInsensitiveExact(extractedConstraints)
+        let dedupedDeliverables = dedupeCaseInsensitiveExact(extractedDeliverables)
+
+        if dedupedConstraints.count != extractedConstraints.count {
+            debugNotes.append("Deduplicated repeated constraints (case-insensitive exact match).")
+        }
+        if dedupedDeliverables.count != extractedDeliverables.count {
+            debugNotes.append("Deduplicated repeated deliverables (case-insensitive exact match).")
+        }
+
+        let outputContract = outputContractLines(for: target, mode: mode, options: options)
+        debugNotes.append("Compiled target-aware output contract for \(target.rawValue).")
+
+        return PromptIR(
+            rawInput: trimmedInput,
+            target: target,
+            mode: mode,
+            goalOrTask: goalOrTask,
+            context: context,
+            constraints: dedupedConstraints,
+            deliverables: dedupedDeliverables,
+            outputContract: outputContract,
+            debugNotes: debugNotes
         )
+    }
+
+    private func detectIRHeading(in line: String) -> (key: IRSectionKey, inlineValue: String)? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedLine.isEmpty else { return nil }
+
+        let strippedHeadingPrefix = trimmedLine.replacingOccurrences(
+            of: #"^#{1,6}\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+        let normalized = strippedHeadingPrefix.lowercased()
+
+        let candidates: [(label: String, key: IRSectionKey)] = [
+            ("goal", .goalOrTask),
+            ("task", .goalOrTask),
+            ("context", .context),
+            ("constraints", .constraints),
+            ("constraint", .constraints),
+            ("deliverables", .deliverables),
+            ("deliverable", .deliverables)
+        ]
+
+        for candidate in candidates {
+            if normalized == candidate.label {
+                return (candidate.key, "")
+            }
+
+            let prefix = "\(candidate.label):"
+            if normalized.hasPrefix(prefix) {
+                let inlineStart = strippedHeadingPrefix.index(strippedHeadingPrefix.startIndex, offsetBy: prefix.count)
+                let inlineValue = strippedHeadingPrefix[inlineStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+                return (candidate.key, inlineValue)
+            }
+        }
+
+        return nil
+    }
+
+    private func extractConstraintLines(from lines: [String]) -> [String] {
+        let prefixes = ["do not", "must", "never", "always", "keep"]
+        return lines.compactMap { line in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+
+            let lowered = trimmed.lowercased()
+            for prefix in prefixes {
+                if lowered == prefix || lowered.hasPrefix("\(prefix) ") || lowered.hasPrefix("\(prefix):") {
+                    return trimmed
+                }
+            }
+
+            return nil
+        }
+    }
+
+    private func dedupeCaseInsensitiveExact(_ lines: [String]) -> [String] {
+        var seen = Set<String>()
+        var output: [String] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            let normalized = trimmed.lowercased()
+            if seen.insert(normalized).inserted {
+                output.append(trimmed)
+            }
+        }
+
+        return output
+    }
+
+    private func outputContractLines(
+        for target: PromptTarget,
+        mode: RewriteMode,
+        options: EnhancementOptions
+    ) -> [String] {
+        var lines: [String]
+
+        switch target {
+        case .claude:
+            lines = [
+                "Return only the requested sections.",
+                "Keep the response concise and execution-oriented."
+            ]
+        case .geminiChatGPT:
+            lines = [
+                "Use markdown headings exactly as provided.",
+                "Keep each section direct and actionable."
+            ]
+        case .perplexity:
+            lines = [
+                "Cite primary sources inline for factual claims.",
+                "Call out uncertainty when evidence is incomplete."
+            ]
+        case .agenticIDE:
+            lines = [
+                "List exact files before writing edits.",
+                "Apply deterministic patch steps in order.",
+                "Provide runnable validation commands."
+            ]
+        }
+
+        if options.noConversationalFiller {
+            lines.append("Avoid conversational filler.")
+        }
+
+        switch mode {
+        case .minimal:
+            return target == .agenticIDE ? Array(lines.prefix(2)) : Array(lines.prefix(1))
+        case .standard:
+            return lines
+        case .aggressive:
+            if target == .agenticIDE {
+                lines.append("Keep rollback scope limited to touched files.")
+            } else {
+                lines.append("Do not include extra sections beyond this contract.")
+            }
+            return lines
+        }
+    }
+
+    private func compileFinalPrompt(from ir: PromptIR) -> String {
+        switch ir.target {
+        case .claude, .geminiChatGPT, .perplexity:
+            return compileChatStylePrompt(from: ir)
+        case .agenticIDE:
+            return compileAgenticIDEPrompt(from: ir)
+        }
+    }
+
+    private func compileChatStylePrompt(from ir: PromptIR) -> String {
+        var sections: [String] = []
+
+        sections.append(section(title: "Task", body: ir.goalOrTask))
+
+        if let context = ir.context, !context.isEmpty {
+            sections.append(section(title: "Context", body: context))
+        }
+
+        if !ir.constraints.isEmpty {
+            sections.append(section(title: "Constraints", body: bulletize(ir.constraints)))
+        }
+
+        if !ir.deliverables.isEmpty {
+            sections.append(section(title: "Deliverables", body: bulletize(ir.deliverables)))
+        }
+
+        if !ir.outputContract.isEmpty {
+            sections.append(section(title: "Output Contract", body: bulletize(ir.outputContract)))
+        }
+
+        return sections.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func compileAgenticIDEPrompt(from ir: PromptIR) -> String {
+        let constraints = ir.constraints.isEmpty ? ["No explicit constraints provided."] : ir.constraints
+        let proposedFileChanges = ir.deliverables.isEmpty ? ["Not specified in input."] : ir.deliverables
+
+        let patchPlan = Array(ir.outputContract.prefix(min(2, ir.outputContract.count)))
+        let validationCommands = ir.outputContract.count > 2
+            ? Array(ir.outputContract.dropFirst(2))
+            : [ir.outputContract.last ?? "Provide runnable validation commands."]
+
+        let sections = [
+            section(title: "Goal", body: ir.goalOrTask),
+            section(title: "Constraints", body: bulletize(constraints)),
+            section(title: "Proposed File Changes", body: bulletize(proposedFileChanges)),
+            section(title: "Patch Plan", body: bulletize(patchPlan)),
+            section(title: "Validation Commands", body: bulletize(validationCommands))
+        ]
+
+        return sections.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func validate(
+        finalPrompt: String,
+        ir: PromptIR,
+        options: EnhancementOptions
+    ) -> ValidationResult {
+        _ = options
+
+        var errors: [String] = []
+        var warnings: [String] = []
+
+        let scaffoldMarkers = [
+            "### Model Family",
+            "### Suggested Parameters",
+            "### Applied Rules",
+            "### Warnings",
+            "### Legacy Canonical Draft"
+        ]
+        let leakedMarkers = scaffoldMarkers.filter(finalPrompt.contains)
+        if !leakedMarkers.isEmpty {
+            errors.append("Scaffold leakage detected: \(leakedMarkers.joined(separator: ", ")).")
+        }
+
+        let preamblePhrase = "Respond only with the requested output"
+        let preambleCount = countOccurrences(of: preamblePhrase, in: finalPrompt)
+        if preambleCount > 1 {
+            errors.append("Repeated preamble phrase detected (\(preambleCount)x): '\(preamblePhrase)'.")
+        }
+
+        var normalizedSeen = Set<String>()
+        var duplicateLines: [String] = []
+        for line in finalPrompt.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if isSeparatorOnlyLine(trimmed) { continue }
+
+            let normalized = normalizeLineForDedupe(trimmed)
+            if !normalizedSeen.insert(normalized).inserted {
+                duplicateLines.append(trimmed)
+            }
+        }
+        if !duplicateLines.isEmpty {
+            errors.append("Duplicate normalized lines detected: \(duplicateLines.joined(separator: " | ")).")
+        }
+
+        let retainedConstraints = ir.constraints.filter { finalPrompt.contains($0) }
+        let complianceScore: Double
+        if ir.constraints.isEmpty {
+            complianceScore = 1.0
+        } else {
+            complianceScore = Double(retainedConstraints.count) / Double(ir.constraints.count)
+        }
+        if complianceScore < 1.0 {
+            let missing = ir.constraints.filter { !finalPrompt.contains($0) }
+            errors.append("Constraint retention failure; missing constraints: \(missing.joined(separator: " | ")).")
+        }
+
+        let templateEchoNeedle = "Use this compact example only to match structure, not to copy content."
+        let hasTemplateEcho = finalPrompt.contains(templateEchoNeedle) && finalPrompt.contains("### Suggested Parameters")
+        if hasTemplateEcho {
+            errors.append("Template echo detected from legacy report artifacts.")
+        }
+
+        let ambiguityIndex = computeAmbiguityIndex(for: finalPrompt)
+        if ambiguityIndex > 0.15 {
+            warnings.append(String(format: "Ambiguity index warning: %.3f (> 0.15).", ambiguityIndex))
+        }
+
+        let metrics = ValidationMetrics(
+            complianceScore: complianceScore,
+            ambiguityIndex: ambiguityIndex,
+            templateOverlap: hasTemplateEcho ? 1.0 : 0.0
+        )
+
+        return ValidationResult(
+            isValid: errors.isEmpty,
+            errors: errors,
+            warnings: warnings,
+            metrics: metrics
+        )
+    }
+
+    private func computeAmbiguityIndex(for text: String) -> Double {
+        let tokens = text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+
+        guard !tokens.isEmpty else { return 0.0 }
+        let vagueTokenCount = tokens.filter { ambiguityLexicon.contains($0) }.count
+        return Double(vagueTokenCount) / Double(tokens.count)
+    }
+
+    private func isSeparatorOnlyLine(_ line: String) -> Bool {
+        guard !line.isEmpty else { return true }
+
+        let separators = CharacterSet(charactersIn: "-_=~*•·⸻—–")
+        for scalar in line.unicodeScalars {
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                continue
+            }
+            if separators.contains(scalar) {
+                continue
+            }
+            return false
+        }
+
+        return true
+    }
+
+    private func renderDebugReport(
+        ir: PromptIR,
+        optimizationOutput: OptimizationOutput?,
+        finalPrompt: String,
+        validationResult: ValidationResult,
+        fallbackNotes: [String]
+    ) -> String {
+        var sections: [String] = []
+
+        if let optimizationOutput {
+            sections.append(renderOptimizationPackage(basePrompt: finalPrompt, output: optimizationOutput))
+        }
+
+        var debugLines: [String] = []
+        debugLines.append("### Rewrite Debug")
+        debugLines.append("- mode: \(ir.mode.rawValue)")
+        debugLines.append("- target: \(ir.target.rawValue)")
+        debugLines.append("- constraints: \(ir.constraints.count)")
+        debugLines.append("- deliverables: \(ir.deliverables.count)")
+        debugLines.append("- output_contract_lines: \(ir.outputContract.count)")
+        debugLines.append("- raw_input_chars: \(ir.rawInput.count)")
+        debugLines.append("- final_prompt_chars: \(finalPrompt.count)")
+        debugLines.append(String(format: "- compliance_score: %.3f", validationResult.metrics.complianceScore))
+        if let ambiguityIndex = validationResult.metrics.ambiguityIndex {
+            debugLines.append(String(format: "- ambiguity_index: %.3f", ambiguityIndex))
+        }
+        if let templateOverlap = validationResult.metrics.templateOverlap {
+            debugLines.append(String(format: "- template_overlap: %.3f", templateOverlap))
+        }
+        debugLines.append("- validation_status: \(validationResult.isValid ? "pass" : "fail")")
+
+        if !fallbackNotes.isEmpty {
+            debugLines.append("")
+            debugLines.append("### Fallback Path")
+            debugLines.append(contentsOf: fallbackNotes.map { "- \($0)" })
+        }
+
+        if !ir.debugNotes.isEmpty {
+            debugLines.append("")
+            debugLines.append("### Parser Notes")
+            debugLines.append(contentsOf: ir.debugNotes.map { "- \($0)" })
+        }
+
+        if !validationResult.errors.isEmpty {
+            debugLines.append("")
+            debugLines.append("### Validation Errors")
+            debugLines.append(contentsOf: validationResult.errors.map { "- \($0)" })
+        }
+
+        if !validationResult.warnings.isEmpty {
+            debugLines.append("")
+            debugLines.append("### Validation Warnings")
+            debugLines.append(contentsOf: validationResult.warnings.map { "- \($0)" })
+        }
+
+        sections.append(debugLines.joined(separator: "\n"))
+        return sections.joined(separator: "\n\n")
     }
 
     private func contextForTarget(profile: PromptProfile, baseContext: String, requirements: [String]) -> String {
@@ -1144,43 +1711,46 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     private func hasRequiredSectionOrder(in prompt: String) -> Bool {
-        var headings: [String] = [
-            heading("Assumptions")
-        ]
+        switch selectedTarget {
+        case .agenticIDE:
+            return hasOrderedHeadings(
+                [
+                    heading("Goal"),
+                    heading("Constraints"),
+                    heading("Proposed File Changes"),
+                    heading("Patch Plan"),
+                    heading("Validation Commands")
+                ],
+                in: prompt
+            )
+        case .claude, .geminiChatGPT, .perplexity:
+            var headings: [String] = []
+            if prompt.contains(heading("Task")) {
+                headings.append(heading("Task"))
+            } else if prompt.contains(heading("Goal")) {
+                headings.append(heading("Goal"))
+            } else {
+                return false
+            }
 
-        if options.addFileTreeRequest {
-            headings.append(heading("File Tree Request (Before Implementation Details)"))
+            let optionalHeadings = [
+                heading("Context"),
+                heading("Constraints"),
+                heading("Deliverables"),
+                heading("Output Contract")
+            ]
+
+            for optionalHeading in optionalHeadings where prompt.contains(optionalHeading) {
+                headings.append(optionalHeading)
+            }
+
+            return hasOrderedHeadings(headings, in: prompt)
         }
+    }
 
-        headings.append(contentsOf: [
-            heading("Goal"),
-            heading("Context"),
-            heading("Constraints"),
-            heading("Deliverables"),
-            heading("Implementation Details")
-        ])
-
-        if options.includeVerificationChecklist {
-            headings.append(heading("Verification Checklist (Pass/Fail)"))
-        }
-
-        if options.includeRisksAndEdgeCases {
-            headings.append(heading("Risks / Edge Cases"))
-        }
-
-        if options.includeAlternatives {
-            headings.append(heading("Alternatives"))
-        }
-
-        if options.includeValidationSteps {
-            headings.append(heading("Validation Steps"))
-        }
-
-        if options.includeRevertPlan {
-            headings.append(heading("Revert Plan"))
-        }
-
+    private func hasOrderedHeadings(_ headings: [String], in prompt: String) -> Bool {
         var searchRange = prompt.startIndex..<prompt.endIndex
+
         for requiredHeading in headings {
             guard let range = prompt.range(of: requiredHeading, options: [], range: searchRange) else {
                 return false
@@ -1188,7 +1758,7 @@ final class PromptEngineViewModel: ObservableObject {
             searchRange = range.upperBound..<prompt.endIndex
         }
 
-        return true
+        return !headings.isEmpty
     }
 
     private func hasClaudeRequiredTags(in prompt: String) -> Bool {
@@ -1570,6 +2140,37 @@ final class PromptEngineViewModel: ObservableObject {
         sections.append(basePrompt)
 
         return sections.joined(separator: "\n")
+    }
+
+    private func extractUserFacingPrompt(from fullText: String) -> String {
+        let optimizedHeading = "### Optimized Prompt"
+        let legacyHeading = "### Legacy Canonical Draft"
+        let stopHeadings = [
+            "### Suggested Parameters",
+            "### Applied Rules",
+            "### Warnings",
+            "### Legacy Canonical Draft"
+        ]
+
+        if let optimizedHeadingRange = fullText.range(of: optimizedHeading) {
+            let contentStart = optimizedHeadingRange.upperBound
+            let contentTail = fullText[contentStart...]
+            var contentEnd = fullText.endIndex
+
+            for stopHeading in stopHeadings {
+                if let stopRange = contentTail.range(of: stopHeading), stopRange.lowerBound < contentEnd {
+                    contentEnd = stopRange.lowerBound
+                }
+            }
+
+            return String(fullText[contentStart..<contentEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if !fullText.contains(optimizedHeading), let legacyHeadingRange = fullText.range(of: legacyHeading) {
+            return String(fullText[legacyHeadingRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return fullText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func clearOptimizationMetadata() {

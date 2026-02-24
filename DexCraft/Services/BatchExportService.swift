@@ -110,7 +110,7 @@ final class BatchExportService {
                 BatchOutput(
                 id: id,
                 input: input,
-                currentOutput: viewModel.generatedPrompt
+                currentOutput: viewModel.finalPrompt
             )
             )
         }

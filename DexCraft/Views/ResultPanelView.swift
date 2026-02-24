@@ -26,7 +26,7 @@ struct ResultPanelView: View {
                     }
                 } else {
                     ScrollView {
-                        Text(viewModel.generatedPrompt)
+                        Text(viewModel.userVisiblePrompt)
                             .font(.system(size: 12, weight: .regular, design: .monospaced))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
@@ -78,6 +78,8 @@ struct ResultPanelView: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
+                Toggle("Show debug report", isOn: $viewModel.showDebugReport)
+                    .toggleStyle(.switch)
                 Toggle("Show Diff View", isOn: $viewModel.showDiff)
                     .toggleStyle(.switch)
                 qualityGate
