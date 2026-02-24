@@ -319,12 +319,21 @@ enum HeuristicPromptOptimizer {
 
         let baselineAnalysis = PromptHeuristics.analyze(input, originalCodeFenceBlocks: originalFenceCount)
         let domainPolicy = domainPolicy(for: context)
+        let baselineKnownSectionCount = parseBlocks(from: input).blocks.reduce(into: 0) { count, block in
+            if block.key != nil { count += 1 }
+        }
+        let baselineUnderspecified = isUnderspecifiedPrompt(
+            input: input,
+            analysis: baselineAnalysis,
+            knownSectionCount: baselineKnownSectionCount
+        )
         let gaps = detectGaps(input: input, analysis: baselineAnalysis, context: context, policy: domainPolicy)
 
         if !gaps.hasAnyGap {
             let baselineScore = scoreCandidate(
                 analysis: baselineAnalysis,
                 text: input,
+                underspecifiedHint: baselineUnderspecified,
                 weights: weights,
                 context: context,
                 policy: domainPolicy
@@ -347,7 +356,13 @@ enum HeuristicPromptOptimizer {
 
         for plan in transformPlans {
             guard candidates.count < maxCandidateCount else { break }
-            let transformed = applyTransforms(plan, to: input, context: context, policy: domainPolicy)
+            let transformed = applyTransforms(
+                plan,
+                to: input,
+                context: context,
+                policy: domainPolicy,
+                underspecifiedHint: baselineUnderspecified
+            )
             let trimmed = transformed.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
 
@@ -366,6 +381,7 @@ enum HeuristicPromptOptimizer {
             let score = scoreCandidate(
                 analysis: analysis,
                 text: candidate.text,
+                underspecifiedHint: baselineUnderspecified,
                 weights: weights,
                 context: context,
                 policy: domainPolicy
@@ -499,7 +515,17 @@ enum HeuristicPromptOptimizer {
         policy: DomainPolicy
     ) -> GapProfile {
         let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
-        let hasKnownHeadings = parseBlocks(from: input).blocks.contains(where: { $0.key != nil })
+        let parsedBlocks = parseBlocks(from: input).blocks
+        let knownSectionCount = parsedBlocks.reduce(into: 0) { count, block in
+            if block.key != nil { count += 1 }
+        }
+        let underspecified = isUnderspecifiedPrompt(
+            input: input,
+            analysis: analysis,
+            knownSectionCount: knownSectionCount
+        )
+        let weakDeliverables = hasWeakDeliverables(in: input)
+        let hasKnownHeadings = parsedBlocks.contains(where: { $0.key != nil })
         let needsCanonicalization = hasKnownHeadings && !isLikelyCanonicalOrder(input)
         let needsSentenceRewrite = analysis.ambiguityCount > 0 || containsHedgingLexicon(in: input)
         let needsDedupe = hasDuplicateNormalizedLines(in: input)
@@ -513,13 +539,13 @@ enum HeuristicPromptOptimizer {
             needsCanonicalization: needsCanonicalization,
             needsContradictionRepair: !analysis.contradictions.isEmpty,
             needsSentenceRewrite: needsSentenceRewrite,
-            needsDeliverables: !analysis.hasEnumeratedDeliverables,
+            needsDeliverables: !analysis.hasEnumeratedDeliverables || weakDeliverables,
             needsOutputFormat: !(analysis.hasOutputFormatHeading || analysis.hasOutputTemplate),
-            needsSuccessCriteria: ambiguous && !analysis.hasSuccessCriteriaHeading,
+            needsSuccessCriteria: (ambiguous || underspecified) && !analysis.hasSuccessCriteriaHeading,
             needsScopeBounds: analysis.scopeLeak && !analysis.hasScopeBounds,
-            needsQuestions: ambiguous && !analysis.hasQuestionsHeading,
+            needsQuestions: (ambiguous || underspecified) && !analysis.hasQuestionsHeading,
             needsDomainPack: domainMissing,
-            needsQualityGate: ambiguous && missingGateSection,
+            needsQualityGate: (ambiguous || underspecified) && missingGateSection,
             needsDedupe: needsDedupe
         )
     }
@@ -571,7 +597,8 @@ enum HeuristicPromptOptimizer {
         _ transforms: [TransformKey],
         to input: String,
         context: HeuristicOptimizationContext,
-        policy: DomainPolicy
+        policy: DomainPolicy,
+        underspecifiedHint: Bool
     ) -> String {
         guard !transforms.isEmpty else { return input }
 
@@ -589,11 +616,11 @@ enum HeuristicPromptOptimizer {
             case .outputFormat:
                 text = outputFormatCandidate(text, context: context)
             case .successCriteria:
-                text = successCriteriaCandidate(text)
+                text = successCriteriaCandidate(text, underspecifiedHint: underspecifiedHint)
             case .scopeBounds:
                 text = scopeBoundsCandidate(text)
             case .questions:
-                text = questionsCandidate(text)
+                text = questionsCandidate(text, underspecifiedHint: underspecifiedHint)
             case .domainPack:
                 text = domainPackCandidate(text, context: context, policy: policy)
             case .qualityGate:
@@ -609,6 +636,7 @@ enum HeuristicPromptOptimizer {
     private static func scoreCandidate(
         analysis: PromptAnalysis,
         text: String,
+        underspecifiedHint: Bool,
         weights: HeuristicScoringWeights,
         context: HeuristicOptimizationContext,
         policy: DomainPolicy
@@ -616,6 +644,7 @@ enum HeuristicPromptOptimizer {
         var score = 0
         var breakdown: [String: Int] = [:]
         var warnings: [String] = []
+        let underspecified = underspecifiedHint
 
         if analysis.hasOutputFormatHeading || analysis.hasOutputTemplate {
             score += weights.outputFormat
@@ -635,15 +664,25 @@ enum HeuristicPromptOptimizer {
             breakdown["missing_deliverables"] = penalty
         }
 
+        if hasWeakDeliverables(in: text) {
+            let penalty = -max(4, weights.deliverables / 3)
+            score += penalty
+            breakdown["weak_deliverables"] = penalty
+        }
+
         if analysis.hasConstraintsHeading && analysis.hasStrongConstraintMarkers {
             score += weights.constraints
             breakdown["strong_constraints"] = weights.constraints
         }
 
         let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
-        if ambiguous && analysis.hasSuccessCriteriaHeading {
+        if (ambiguous || underspecified) && analysis.hasSuccessCriteriaHeading {
             score += weights.successCriteria
             breakdown["success_criteria_for_ambiguity"] = weights.successCriteria
+        } else if underspecified {
+            let penalty = -max(3, weights.successCriteria / 2)
+            score += penalty
+            breakdown["missing_success_criteria_underspecified"] = penalty
         }
 
         if analysis.scopeLeak && analysis.hasScopeBounds {
@@ -651,9 +690,13 @@ enum HeuristicPromptOptimizer {
             breakdown["scope_bounded"] = weights.scopeBounds
         }
 
-        if ambiguous && analysis.hasQuestionsHeading {
+        if (ambiguous || underspecified) && analysis.hasQuestionsHeading {
             score += weights.questions
             breakdown["questions_for_ambiguity"] = weights.questions
+        } else if underspecified {
+            let penalty = -max(2, weights.questions / 2)
+            score += penalty
+            breakdown["missing_questions_underspecified"] = penalty
         }
 
         let exampleBonus = min(12, analysis.examplesCount * weights.examplesPerUnit)
@@ -708,6 +751,14 @@ enum HeuristicPromptOptimizer {
         policy: DomainPolicy
     ) -> StructuralDelta {
         var gain = 0
+        let baselineKnownSectionCount = parseBlocks(from: baselineText).blocks.reduce(into: 0) { count, block in
+            if block.key != nil { count += 1 }
+        }
+        let baselineUnderspecified = isUnderspecifiedPrompt(
+            input: baselineText,
+            analysis: baseline,
+            knownSectionCount: baselineKnownSectionCount
+        )
 
         if !(baseline.hasOutputFormatHeading || baseline.hasOutputTemplate) && (candidate.hasOutputFormatHeading || candidate.hasOutputTemplate) {
             gain += 2
@@ -717,7 +768,7 @@ enum HeuristicPromptOptimizer {
             gain += 2
         }
 
-        if (baseline.ambiguityCount >= 2 || baseline.isVagueGoal) {
+        if (baseline.ambiguityCount >= 2 || baseline.isVagueGoal || baselineUnderspecified) {
             if !baseline.hasSuccessCriteriaHeading && candidate.hasSuccessCriteriaHeading {
                 gain += 1
             }
@@ -736,6 +787,16 @@ enum HeuristicPromptOptimizer {
 
         if containsAllKeywords(policy.requiredKeywords, in: candidateText) && !containsAllKeywords(policy.requiredKeywords, in: baselineText) {
             gain += 2
+        }
+
+        let baselineMissingSections = policy.requiredSectionsForAmbiguity.reduce(into: 0) { count, key in
+            if !containsHeading(key.headingTitle, in: baselineText) { count += 1 }
+        }
+        let candidateMissingSections = policy.requiredSectionsForAmbiguity.reduce(into: 0) { count, key in
+            if !containsHeading(key.headingTitle, in: candidateText) { count += 1 }
+        }
+        if candidateMissingSections < baselineMissingSections {
+            gain += min(3, baselineMissingSections - candidateMissingSections)
         }
 
         let baseLength = max(1, baselineText.count)
@@ -833,9 +894,14 @@ enum HeuristicPromptOptimizer {
     private static func deliverablesCandidate(_ input: String, context: HeuristicOptimizationContext) -> String {
         transformPreservingCodeFences(input) { text in
             let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
-            guard !analysis.hasEnumeratedDeliverables else { return text }
+            let needsUpgrade = !analysis.hasEnumeratedDeliverables || hasWeakDeliverables(in: text)
+            guard needsUpgrade else { return text }
 
             let inferred = inferDeliverables(from: text, context: context)
+            if containsHeading("Deliverables", in: text) {
+                return replaceSectionBody(in: text, title: "Deliverables", body: inferred)
+            }
+
             return appendSection(to: text, title: "Deliverables", body: inferred)
         }
     }
@@ -853,10 +919,18 @@ enum HeuristicPromptOptimizer {
         }
     }
 
-    private static func successCriteriaCandidate(_ input: String) -> String {
+    private static func successCriteriaCandidate(_ input: String, underspecifiedHint: Bool) -> String {
         transformPreservingCodeFences(input) { text in
             let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
-            let needsCriteria = (analysis.ambiguityCount > 0 || analysis.isVagueGoal) && !analysis.hasSuccessCriteriaHeading
+            let knownSectionCount = parseBlocks(from: text).blocks.reduce(into: 0) { count, block in
+                if block.key != nil { count += 1 }
+            }
+            let underspecified = underspecifiedHint || isUnderspecifiedPrompt(
+                input: text,
+                analysis: analysis,
+                knownSectionCount: knownSectionCount
+            )
+            let needsCriteria = (analysis.ambiguityCount > 0 || analysis.isVagueGoal || underspecified) && !analysis.hasSuccessCriteriaHeading
             guard needsCriteria else { return text }
 
             return appendSection(
@@ -888,11 +962,19 @@ enum HeuristicPromptOptimizer {
         }
     }
 
-    private static func questionsCandidate(_ input: String) -> String {
+    private static func questionsCandidate(_ input: String, underspecifiedHint: Bool) -> String {
         transformPreservingCodeFences(input) { text in
             let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
-            let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
-            guard ambiguous && !analysis.hasQuestionsHeading else { return text }
+            let knownSectionCount = parseBlocks(from: text).blocks.reduce(into: 0) { count, block in
+                if block.key != nil { count += 1 }
+            }
+            let underspecified = underspecifiedHint || isUnderspecifiedPrompt(
+                input: text,
+                analysis: analysis,
+                knownSectionCount: knownSectionCount
+            )
+            let needsQuestions = (analysis.ambiguityCount >= 2 || analysis.isVagueGoal || underspecified) && !analysis.hasQuestionsHeading
+            guard needsQuestions else { return text }
 
             return appendSection(
                 to: text,
@@ -1172,12 +1254,17 @@ enum HeuristicPromptOptimizer {
             items = defaultDeliverables(for: context)
         }
 
-        if items.count < 3 {
-            items.append("Provide deterministic validation evidence for each major requirement.")
+        let validationLine = "Provide deterministic validation evidence for each major requirement."
+        var merged = dedupePreservingOrder(items + defaultDeliverables(for: context))
+        if !merged.contains(validationLine) {
+            merged.append(validationLine)
+        }
+        while merged.count < 3 {
+            merged.append(validationLine)
         }
 
         var numbered: [String] = []
-        for (index, item) in dedupePreservingOrder(items).prefix(3).enumerated() {
+        for (index, item) in merged.prefix(3).enumerated() {
             numbered.append("\(index + 1). \(item)")
         }
 
@@ -1516,6 +1603,45 @@ enum HeuristicPromptOptimizer {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static func replaceSectionBody(in text: String, title: String, body: [String]) -> String {
+        let cleanedBody = cleanBodyLines(body)
+        guard !cleanedBody.isEmpty else { return text }
+
+        let parsed = parseBlocks(from: text)
+        let target = normalizeHeading(title)
+        var rendered: [String] = []
+        var replaced = false
+
+        if !parsed.preamble.isEmpty {
+            let preamble = parsed.preamble.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !preamble.isEmpty {
+                rendered.append(preamble)
+            }
+        }
+
+        for block in parsed.blocks {
+            let normalizedTitle = normalizeHeading(block.title)
+            if normalizedTitle == target {
+                rendered.append(renderSection(title: block.title, body: cleanedBody))
+                replaced = true
+            } else {
+                let existingBody = cleanBodyLines(block.body)
+                if !existingBody.isEmpty {
+                    rendered.append(renderSection(title: block.title, body: existingBody))
+                }
+            }
+        }
+
+        if !replaced {
+            rendered.append(renderSection(title: title, body: cleanedBody))
+        }
+
+        return rendered
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func renderSection(title: String, body: [String]) -> String {
         "### \(title)\n" + body.joined(separator: "\n")
     }
@@ -1570,6 +1696,66 @@ enum HeuristicPromptOptimizer {
         }
 
         return false
+    }
+
+    private static func isUnderspecifiedPrompt(
+        input: String,
+        analysis: PromptAnalysis,
+        knownSectionCount: Int
+    ) -> Bool {
+        let compactLength = input.trimmingCharacters(in: .whitespacesAndNewlines).count
+        let shortPrompt =
+            compactLength <= 220 ||
+            analysis.tokenEstimate <= 120 ||
+            analysis.goalLine.trimmingCharacters(in: .whitespacesAndNewlines).count <= 80
+        let limitedStructure = knownSectionCount <= 3
+        let hasCoreGaps =
+            !analysis.hasConstraintsHeading ||
+            !analysis.hasSuccessCriteriaHeading ||
+            !analysis.hasQuestionsHeading
+        let shortGoalSeed = extractGoalSeed(from: input).count <= 100
+
+        return shortPrompt && limitedStructure && hasCoreGaps && shortGoalSeed
+    }
+
+    private static func hasWeakDeliverables(in text: String) -> Bool {
+        let parsed = parseBlocks(from: text)
+        guard let deliverablesBlock = parsed.blocks.first(where: { $0.key == .deliverables }) else {
+            return false
+        }
+
+        let lines = cleanBodyLines(deliverablesBlock.body)
+        let numberedLines = lines.filter { line in
+            RegexBank.leadingBullet.firstMatch(
+                in: line,
+                options: [],
+                range: NSRange(line.startIndex..<line.endIndex, in: line)
+            ) != nil
+        }
+
+        if numberedLines.count < 3 {
+            return true
+        }
+
+        let goalSeed = normalizeDeliverableForComparison(extractGoalSeed(from: text))
+        if goalSeed.isEmpty { return false }
+
+        return numberedLines.contains { line in
+            let normalized = normalizeDeliverableForComparison(line)
+            return normalized == goalSeed || normalized.contains(goalSeed) || goalSeed.contains(normalized)
+        }
+    }
+
+    private static func normalizeDeliverableForComparison(_ value: String) -> String {
+        let strippedBullet = RegexBank.leadingBullet.stringByReplacingMatches(
+            in: value,
+            options: [],
+            range: NSRange(value.startIndex..<value.endIndex, in: value),
+            withTemplate: ""
+        )
+        return strippedBullet
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".:;,-")))
+            .lowercased()
     }
 
     private static func containsHedgingLexicon(in text: String) -> Bool {

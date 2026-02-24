@@ -87,6 +87,18 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         XCTAssertTrue(result.optimizedText.contains("### Questions"))
     }
 
+    func testUnderspecifiedBuildTaskGetsStructuralExpansion() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Build me a chess game.",
+            context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
+        )
+
+        XCTAssertTrue(result.optimizedText.contains("### Constraints"))
+        XCTAssertTrue(result.optimizedText.contains("### Output Format"))
+        XCTAssertTrue(result.optimizedText.contains("### Success Criteria"))
+        XCTAssertTrue(result.optimizedText.contains("### Questions"))
+    }
+
     func testGapDrivenStrongPromptAvoidsUnnecessaryExpansion() {
         let baseline = """
         ### Goal
