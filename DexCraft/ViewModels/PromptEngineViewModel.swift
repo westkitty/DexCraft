@@ -381,8 +381,30 @@ final class PromptEngineViewModel: ObservableObject {
             )
         }
 
-        finalPrompt = compiledFinalPrompt
-        generatedPrompt = compiledFinalPrompt
+        let baselinePrompt = compiledFinalPrompt
+        var selectedFinalPrompt = baselinePrompt
+        var heuristicResult: HeuristicOptimizationResult?
+
+        if autoOptimizePrompt {
+            let result = HeuristicPromptOptimizer.optimize(baselinePrompt)
+            heuristicResult = result
+            let trimmedOptimized = result.optimizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            selectedFinalPrompt = trimmedOptimized.isEmpty ? baselinePrompt : trimmedOptimized
+            fallbackNotes.append("Heuristic optimizer selected: \(result.selectedCandidateTitle) (score \(result.score)).")
+            if !result.breakdown.isEmpty {
+                let summary = result.breakdown
+                    .sorted { $0.key < $1.key }
+                    .map { "\($0.key)=\($0.value)" }
+                    .joined(separator: ", ")
+                fallbackNotes.append("Heuristic score breakdown: \(summary)")
+            }
+            if !result.warnings.isEmpty {
+                fallbackNotes.append(contentsOf: result.warnings.map { "Heuristic warning: \($0)" })
+            }
+        }
+
+        finalPrompt = selectedFinalPrompt
+        generatedPrompt = selectedFinalPrompt
 
         if autoOptimizePrompt {
             let output = offlinePromptOptimizer.optimize(
@@ -394,8 +416,14 @@ final class PromptEngineViewModel: ObservableObject {
                 )
             )
             lastOptimizationOutput = output
-            optimizationAppliedRules = output.appliedRules
-            optimizationWarnings = output.warnings
+            if let heuristicResult {
+                optimizationAppliedRules = ["Heuristic selection: \(heuristicResult.selectedCandidateTitle)"]
+                    + output.appliedRules
+                optimizationWarnings = heuristicResult.warnings + output.warnings
+            } else {
+                optimizationAppliedRules = output.appliedRules
+                optimizationWarnings = output.warnings
+            }
             optimizationSystemPreamble = output.systemPreamble
             optimizationSuggestedTemperature = output.suggestedTemperature
             optimizationSuggestedTopP = output.suggestedTopP
@@ -403,7 +431,7 @@ final class PromptEngineViewModel: ObservableObject {
             debugReport = renderDebugReport(
                 ir: selectedIR,
                 optimizationOutput: output,
-                finalPrompt: compiledFinalPrompt,
+                finalPrompt: selectedFinalPrompt,
                 validationResult: validation,
                 fallbackNotes: fallbackNotes
             )
@@ -412,7 +440,7 @@ final class PromptEngineViewModel: ObservableObject {
             debugReport = renderDebugReport(
                 ir: selectedIR,
                 optimizationOutput: nil,
-                finalPrompt: compiledFinalPrompt,
+                finalPrompt: selectedFinalPrompt,
                 validationResult: validation,
                 fallbackNotes: fallbackNotes
             )
