@@ -21,6 +21,17 @@ struct PromptAnalysis {
 }
 
 enum PromptHeuristics {
+    private enum RegexBank {
+        static let shieldedLiteral = try! NSRegularExpression(
+            pattern: #"https?://[^\s\]\)]+|\{[a-zA-Z0-9_\-]+\}|/(?:[a-zA-Z0-9._\-]+/)*[a-zA-Z0-9._\-]+(?:\.[a-zA-Z0-9._\-]+)?"#,
+            options: [.caseInsensitive]
+        )
+        static let headingPrefix = try! NSRegularExpression(pattern: #"^#{1,6}\s*"#, options: [])
+    }
+
+    private static let regexCacheLock = NSLock()
+    private static var regexCache: [String: NSRegularExpression] = [:]
+
     static let ambiguityTokens: [String] = [
         "improve", "optimize", "enhance", "better", "good", "nice", "robust", "clean", "simple", "easy", "fast", "best", "efficient",
         "some", "various", "etc", "and so on", "as needed", "if possible", "ideally", "maybe", "try to", "could you", "might"
@@ -130,14 +141,8 @@ enum PromptHeuristics {
     }
 
     static func shieldProtectedLiterals(in text: String) -> (shielded: String, table: [String: String]) {
-        let pattern = #"https?://[^\s\]\)]+|\{[a-zA-Z0-9_\-]+\}|/(?:[a-zA-Z0-9._\-]+/)*[a-zA-Z0-9._\-]+(?:\.[a-zA-Z0-9._\-]+)?"#
-
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return (text, [:])
-        }
-
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, options: [], range: nsRange)
+        let matches = RegexBank.shieldedLiteral.matches(in: text, options: [], range: nsRange)
 
         var table: [String: String] = [:]
         var output = text
@@ -155,7 +160,9 @@ enum PromptHeuristics {
 
     static func restoreProtectedLiterals(in text: String, table: [String: String]) -> String {
         var output = text
-        for (token, literal) in table {
+        // Replace longer tokens first so "__..._1__" cannot partially match "__..._10__".
+        for token in table.keys.sorted(by: { $0.count > $1.count }) {
+            guard let literal = table[token] else { continue }
             output = output.replacingOccurrences(of: token, with: literal)
         }
         return output
@@ -219,10 +226,11 @@ enum PromptHeuristics {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        let withoutHashes = trimmed.replacingOccurrences(
-            of: #"^#{1,6}\s*"#,
-            with: "",
-            options: .regularExpression
+        let withoutHashes = RegexBank.headingPrefix.stringByReplacingMatches(
+            in: trimmed,
+            options: [],
+            range: NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed),
+            withTemplate: ""
         )
 
         let lower = withoutHashes.lowercased()
@@ -265,7 +273,19 @@ enum PromptHeuristics {
         pattern: String,
         options: NSRegularExpression.Options
     ) -> Int {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
+        let cacheKey = "\(options.rawValue)|\(pattern)"
+        let regex: NSRegularExpression
+
+        regexCacheLock.lock()
+        if let cached = regexCache[cacheKey] {
+            regex = cached
+            regexCacheLock.unlock()
+        } else if let compiled = try? NSRegularExpression(pattern: pattern, options: options) {
+            regexCache[cacheKey] = compiled
+            regex = compiled
+            regexCacheLock.unlock()
+        } else {
+            regexCacheLock.unlock()
             return 0
         }
 

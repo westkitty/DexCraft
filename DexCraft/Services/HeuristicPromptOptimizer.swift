@@ -1,4 +1,94 @@
 import Foundation
+import NaturalLanguage
+
+struct HeuristicScoringWeights: Codable, Equatable {
+    var outputFormat: Int
+    var deliverables: Int
+    var constraints: Int
+    var successCriteria: Int
+    var scopeBounds: Int
+    var questions: Int
+    var examplesPerUnit: Int
+    var tokenPenaltyBase: Int
+    var contradictionPenalty: Int
+    var unresolvedPlaceholderPenalty: Int
+    var domainPackBonus: Int
+    var qualityGateBonus: Int
+
+    static let defaults = HeuristicScoringWeights(
+        outputFormat: 20,
+        deliverables: 15,
+        constraints: 10,
+        successCriteria: 10,
+        scopeBounds: 8,
+        questions: 5,
+        examplesPerUnit: 5,
+        tokenPenaltyBase: -8,
+        contradictionPenalty: -8,
+        unresolvedPlaceholderPenalty: -6,
+        domainPackBonus: 7,
+        qualityGateBonus: 8
+    )
+
+    func clamped() -> HeuristicScoringWeights {
+        HeuristicScoringWeights(
+            outputFormat: clamp(outputFormat, min: 5, max: 30),
+            deliverables: clamp(deliverables, min: 5, max: 28),
+            constraints: clamp(constraints, min: 4, max: 22),
+            successCriteria: clamp(successCriteria, min: 4, max: 22),
+            scopeBounds: clamp(scopeBounds, min: 3, max: 16),
+            questions: clamp(questions, min: 0, max: 16),
+            examplesPerUnit: clamp(examplesPerUnit, min: 0, max: 10),
+            tokenPenaltyBase: clamp(tokenPenaltyBase, min: -22, max: -2),
+            contradictionPenalty: clamp(contradictionPenalty, min: -24, max: -4),
+            unresolvedPlaceholderPenalty: clamp(unresolvedPlaceholderPenalty, min: -14, max: -2),
+            domainPackBonus: clamp(domainPackBonus, min: 0, max: 16),
+            qualityGateBonus: clamp(qualityGateBonus, min: 0, max: 18)
+        )
+    }
+
+    var signature: String {
+        [
+            outputFormat,
+            deliverables,
+            constraints,
+            successCriteria,
+            scopeBounds,
+            questions,
+            examplesPerUnit,
+            tokenPenaltyBase,
+            contradictionPenalty,
+            unresolvedPlaceholderPenalty,
+            domainPackBonus,
+            qualityGateBonus
+        ]
+        .map(String.init)
+        .joined(separator: ":")
+    }
+
+    private func clamp(_ value: Int, min minimum: Int, max maximum: Int) -> Int {
+        Swift.max(minimum, Swift.min(maximum, value))
+    }
+}
+
+struct HeuristicOptimizationContext {
+    let target: PromptTarget
+    let scenario: ScenarioProfile
+    let historyPrompts: [String]
+    let localWeights: HeuristicScoringWeights?
+
+    init(
+        target: PromptTarget = .claude,
+        scenario: ScenarioProfile = .generalAssistant,
+        historyPrompts: [String] = [],
+        localWeights: HeuristicScoringWeights? = nil
+    ) {
+        self.target = target
+        self.scenario = scenario
+        self.historyPrompts = historyPrompts
+        self.localWeights = localWeights
+    }
+}
 
 struct HeuristicOptimizationResult {
     let optimizedText: String
@@ -6,12 +96,31 @@ struct HeuristicOptimizationResult {
     let score: Int
     let breakdown: [String: Int]
     let warnings: [String]
+    let tunedWeights: HeuristicScoringWeights?
 }
 
 enum HeuristicPromptOptimizer {
+    private static let maxCandidateCount = 16
+    private static let resultCache = OptimizationCache(capacity: 64)
+
     private struct Candidate {
         let title: String
         let text: String
+        let transforms: [TransformKey]
+    }
+
+    private enum TransformKey: String {
+        case canonicalize = "Canonicalize headings/order"
+        case contradictionRepair = "Repair contradictions"
+        case sentenceRewrite = "Sentence-level rewrite"
+        case deliverablesInference = "Infer deliverables"
+        case outputFormat = "Add output format"
+        case successCriteria = "Add success criteria"
+        case scopeBounds = "Add scope bounds"
+        case questions = "Add clarifying questions"
+        case domainPack = "Apply domain pack"
+        case qualityGate = "Apply quality gate"
+        case dedupe = "Dedupe/normalize whitespace"
     }
 
     private enum SectionKey: Int, CaseIterable {
@@ -25,20 +134,13 @@ enum HeuristicPromptOptimizer {
 
         var headingTitle: String {
             switch self {
-            case .goal:
-                return "Goal"
-            case .context:
-                return "Context"
-            case .constraints:
-                return "Constraints"
-            case .deliverables:
-                return "Deliverables"
-            case .outputFormat:
-                return "Output Format"
-            case .questions:
-                return "Questions"
-            case .successCriteria:
-                return "Success Criteria"
+            case .goal: return "Goal"
+            case .context: return "Context"
+            case .constraints: return "Constraints"
+            case .deliverables: return "Deliverables"
+            case .outputFormat: return "Output Format"
+            case .questions: return "Questions"
+            case .successCriteria: return "Success Criteria"
             }
         }
     }
@@ -55,43 +157,205 @@ enum HeuristicPromptOptimizer {
         let warnings: [String]
     }
 
+    private struct GapProfile {
+        let needsCanonicalization: Bool
+        let needsContradictionRepair: Bool
+        let needsSentenceRewrite: Bool
+        let needsDeliverables: Bool
+        let needsOutputFormat: Bool
+        let needsSuccessCriteria: Bool
+        let needsScopeBounds: Bool
+        let needsQuestions: Bool
+        let needsDomainPack: Bool
+        let needsQualityGate: Bool
+        let needsDedupe: Bool
+
+        var hasAnyGap: Bool {
+            needsCanonicalization ||
+                needsContradictionRepair ||
+                needsSentenceRewrite ||
+                needsDeliverables ||
+                needsOutputFormat ||
+                needsSuccessCriteria ||
+                needsScopeBounds ||
+                needsQuestions ||
+                needsDomainPack ||
+                needsQualityGate ||
+                needsDedupe
+        }
+    }
+
+    private struct StructuralDelta {
+        let gain: Int
+        let growthRatio: Double
+        let meaningful: Bool
+    }
+
+    private struct DomainPolicy {
+        let requiredKeywords: [String]
+        let requiredSectionsForAmbiguity: [SectionKey]
+        let supplementalSections: [(title: String, body: [String])]
+    }
+
+    private enum WeightSource {
+        case defaults
+        case local
+        case learned
+    }
+
+    private struct WeightResolution {
+        let weights: HeuristicScoringWeights
+        let source: WeightSource
+    }
+
+    private final class OptimizationCache {
+        private let capacity: Int
+        private let lock = NSLock()
+        private var values: [String: HeuristicOptimizationResult] = [:]
+        private var order: [String] = []
+
+        init(capacity: Int) {
+            self.capacity = max(4, capacity)
+        }
+
+        func value(for key: String) -> HeuristicOptimizationResult? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let value = values[key] else { return nil }
+            if let index = order.firstIndex(of: key) {
+                order.remove(at: index)
+                order.append(key)
+            }
+            return value
+        }
+
+        func insert(_ value: HeuristicOptimizationResult, for key: String) {
+            lock.lock()
+            defer { lock.unlock() }
+
+            if values[key] != nil {
+                values[key] = value
+                if let index = order.firstIndex(of: key) {
+                    order.remove(at: index)
+                }
+                order.append(key)
+                return
+            }
+
+            values[key] = value
+            order.append(key)
+
+            while order.count > capacity {
+                let evicted = order.removeFirst()
+                values.removeValue(forKey: evicted)
+            }
+        }
+    }
+
+    private enum RegexBank {
+        static let headingPrefix = try! NSRegularExpression(pattern: #"^#{1,6}\s*"#, options: [])
+        static let leadingBullet = try! NSRegularExpression(pattern: #"^\s*(?:\d+\.|[-*])\s+"#, options: [])
+        static let trailingWhitespace = try! NSRegularExpression(pattern: #"\s+$"#, options: [])
+        static let internalWhitespace = try! NSRegularExpression(pattern: #"[ \t]{2,}"#, options: [])
+        static let normalizedWhitespace = try! NSRegularExpression(pattern: #"\s+"#, options: [])
+        static let actionObject = try! NSRegularExpression(
+            pattern: #"\b(fix|implement|refactor|write|create|update|remove|migrate|optimize|document|test|benchmark|deploy|analyze|summarize|research|design|build)\b\s+([^\n\.,;:]{2,120})"#,
+            options: [.caseInsensitive]
+        )
+
+        static let sentenceReplacements: [(regex: NSRegularExpression, replacement: String)] = [
+            (try! NSRegularExpression(pattern: #"(?<!\w)could you(?!\w)"#, options: [.caseInsensitive]), ""),
+            (try! NSRegularExpression(pattern: #"(?<!\w)can you(?!\w)"#, options: [.caseInsensitive]), ""),
+            (try! NSRegularExpression(pattern: #"(?<!\w)please(?!\w)"#, options: [.caseInsensitive]), ""),
+            (try! NSRegularExpression(pattern: #"(?<!\w)try to(?!\w)"#, options: [.caseInsensitive]), ""),
+            (try! NSRegularExpression(pattern: #"(?<!\w)if possible(?!\w)"#, options: [.caseInsensitive]), "when required"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)maybe(?!\w)"#, options: [.caseInsensitive]), ""),
+            (try! NSRegularExpression(pattern: #"(?<!\w)possibly(?!\w)"#, options: [.caseInsensitive]), ""),
+            (try! NSRegularExpression(pattern: #"(?<!\w)ideally(?!\w)"#, options: [.caseInsensitive]), "required"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)might(?!\w)"#, options: [.caseInsensitive]), "must"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)should probably(?!\w)"#, options: [.caseInsensitive]), "must"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)best effort(?!\w)"#, options: [.caseInsensitive]), "strictly follow requirements"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)as needed(?!\w)"#, options: [.caseInsensitive]), "when required"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)and so on(?!\w)"#, options: [.caseInsensitive]), "with explicit items only"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)etc\.?"#, options: [.caseInsensitive]), "with explicit items only")
+        ]
+
+        static let contradictionReplacements: [(regex: NSRegularExpression, replacement: String)] = [
+            (try! NSRegularExpression(pattern: #"(?<!\w)(search online|browse the web|web research|internet research)(?!\w)"#, options: [.caseInsensitive]), "use provided/local sources only"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)(exhaustive|comprehensive|in its entirety|full detail)(?!\w)"#, options: [.caseInsensitive]), "scope-complete"),
+            (try! NSRegularExpression(pattern: #"(?<!\w)(write code|implement|patch)(?!\w)"#, options: [.caseInsensitive]), "provide a non-code implementation plan")
+        ]
+    }
+
     static func optimize(_ baselinePrompt: String) -> HeuristicOptimizationResult {
+        optimize(baselinePrompt, context: HeuristicOptimizationContext())
+    }
+
+    static func optimize(_ baselinePrompt: String, context: HeuristicOptimizationContext) -> HeuristicOptimizationResult {
         let baseline = baselinePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let input = baseline.isEmpty ? baselinePrompt : baseline
         let originalFenceCount = PromptTextGuards.splitByCodeFences(input).reduce(into: 0) { result, segment in
             if case .codeFence = segment { result += 1 }
         }
 
+        if input.isEmpty {
+            return HeuristicOptimizationResult(
+                optimizedText: input,
+                selectedCandidateTitle: "0 Baseline",
+                score: 0,
+                breakdown: [:],
+                warnings: [],
+                tunedWeights: nil
+            )
+        }
+
+        let weightResolution = resolveWeights(for: context)
+        let weights = weightResolution.weights.clamped()
+        let cacheKey = buildCacheKey(input: input, context: context, weights: weights)
+
+        if let cached = resultCache.value(for: cacheKey) {
+            return cached
+        }
+
         let baselineAnalysis = PromptHeuristics.analyze(input, originalCodeFenceBlocks: originalFenceCount)
+        let domainPolicy = domainPolicy(for: context)
+        let gaps = detectGaps(input: input, analysis: baselineAnalysis, context: context, policy: domainPolicy)
 
-        var candidates: [Candidate] = []
-        candidates.append(Candidate(title: "0 Baseline", text: input))
-        candidates.append(Candidate(title: "1 Canonicalize headings/order", text: canonicalizeCandidate(input)))
-        candidates.append(Candidate(title: "2 Strengthen deliverables", text: deliverablesCandidate(input)))
-        candidates.append(Candidate(title: "3 Add output format", text: outputFormatCandidate(input)))
-        candidates.append(Candidate(title: "4 Add success criteria", text: successCriteriaCandidate(input)))
-        candidates.append(Candidate(title: "5 Add scope bounds", text: scopeBoundsCandidate(input)))
-        candidates.append(Candidate(title: "6 Add questions", text: questionsCandidate(input)))
-        candidates.append(Candidate(title: "7 De-hedge language", text: deHedgedCandidate(input)))
-        candidates.append(Candidate(title: "8 Dedupe/normalize whitespace", text: dedupeCandidate(input)))
+        if !gaps.hasAnyGap {
+            let baselineScore = scoreCandidate(
+                analysis: baselineAnalysis,
+                text: input,
+                weights: weights,
+                context: context,
+                policy: domainPolicy
+            )
+            let result = HeuristicOptimizationResult(
+                optimizedText: input,
+                selectedCandidateTitle: "0 Baseline",
+                score: baselineScore.score,
+                breakdown: baselineScore.breakdown,
+                warnings: baselineScore.warnings,
+                tunedWeights: weightResolution.source == .defaults ? nil : weights
+            )
+            resultCache.insert(result, for: cacheKey)
+            return result
+        }
 
-        let comboDeliverablesOutput = outputFormatCandidate(deliverablesCandidate(input))
-        let comboOutputSuccess = successCriteriaCandidate(outputFormatCandidate(input))
-        let comboScopeQuestions = questionsCandidate(scopeBoundsCandidate(input))
-        let comboDeliverablesOutputSuccess = successCriteriaCandidate(outputFormatCandidate(deliverablesCandidate(input)))
-        let comboDeliverablesOutputSuccessQuestions = questionsCandidate(comboDeliverablesOutputSuccess)
+        let transformPlans = buildTransformPlans(from: gaps)
+        var candidates: [Candidate] = [Candidate(title: "0 Baseline", text: input, transforms: [])]
+        var seenFingerprints = Set<String>([fingerprint(input)])
 
-        let optionalCombos: [Candidate] = [
-            Candidate(title: "Combo Deliverables+Output", text: comboDeliverablesOutput),
-            Candidate(title: "Combo Output+Success", text: comboOutputSuccess),
-            Candidate(title: "Combo Scope+Questions", text: comboScopeQuestions),
-            Candidate(title: "Combo Deliverables+Output+Success", text: comboDeliverablesOutputSuccess),
-            Candidate(title: "Combo Deliverables+Output+Success+Questions", text: comboDeliverablesOutputSuccessQuestions)
-        ]
+        for plan in transformPlans {
+            guard candidates.count < maxCandidateCount else { break }
+            let transformed = applyTransforms(plan, to: input, context: context, policy: domainPolicy)
+            let trimmed = transformed.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
 
-        for candidate in optionalCombos {
-            guard candidates.count < 16 else { break }
-            candidates.append(candidate)
+            let printKey = fingerprint(trimmed)
+            guard seenFingerprints.insert(printKey).inserted else { continue }
+
+            let title = "\(candidates.count) " + plan.map(\.rawValue).joined(separator: " + ")
+            candidates.append(Candidate(title: title, text: trimmed, transforms: plan))
         }
 
         var scored: [(candidate: Candidate, score: ScoreResult, analysis: PromptAnalysis)] = []
@@ -99,18 +363,27 @@ enum HeuristicPromptOptimizer {
 
         for candidate in candidates {
             let analysis = PromptHeuristics.analyze(candidate.text, originalCodeFenceBlocks: originalFenceCount)
-            let score = scoreCandidate(analysis: analysis)
+            let score = scoreCandidate(
+                analysis: analysis,
+                text: candidate.text,
+                weights: weights,
+                context: context,
+                policy: domainPolicy
+            )
             scored.append((candidate, score, analysis))
         }
 
         guard let baselineScored = scored.first else {
-            return HeuristicOptimizationResult(
+            let fallback = HeuristicOptimizationResult(
                 optimizedText: input,
                 selectedCandidateTitle: "0 Baseline",
                 score: 0,
                 breakdown: [:],
-                warnings: []
+                warnings: [],
+                tunedWeights: weightResolution.source == .defaults ? nil : weights
             )
+            resultCache.insert(fallback, for: cacheKey)
+            return fallback
         }
 
         var bestIndex = 0
@@ -123,10 +396,19 @@ enum HeuristicPromptOptimizer {
         var selected = scored[bestIndex]
         var warnings = selected.score.warnings
 
-        if selected.score.score <= baselineScored.score.score + 2 {
+        let delta = structuralDelta(
+            baselineText: baselineScored.candidate.text,
+            baseline: baselineScored.analysis,
+            candidateText: selected.candidate.text,
+            candidate: selected.analysis,
+            context: context,
+            policy: domainPolicy
+        )
+
+        if !shouldPromote(best: selected, baseline: baselineScored, delta: delta) {
             if bestIndex != 0 {
                 warnings.append(
-                    "Anti-regression fallback: baseline retained (best=\(selected.score.score), baseline=\(baselineScored.score.score))."
+                    "Anti-regression fallback: baseline retained due to insufficient structural gain (best=\(selected.score.score), baseline=\(baselineScored.score.score), gain=\(delta.gain))."
                 )
             }
             selected = baselineScored
@@ -136,84 +418,354 @@ enum HeuristicPromptOptimizer {
             warnings.append("Scope leak terms remain; consider tightening bounds explicitly.")
         }
 
-        return HeuristicOptimizationResult(
+        let result = HeuristicOptimizationResult(
             optimizedText: selected.candidate.text,
             selectedCandidateTitle: selected.candidate.title,
             score: selected.score.score,
             breakdown: selected.score.breakdown,
-            warnings: warnings
+            warnings: dedupePreservingOrder(warnings),
+            tunedWeights: weightResolution.source == .defaults ? nil : weights
+        )
+
+        resultCache.insert(result, for: cacheKey)
+        return result
+    }
+
+    static func learnWeights(from historyPrompts: [String]) -> HeuristicScoringWeights? {
+        let sample = Array(historyPrompts.prefix(50))
+        guard sample.count >= 5 else { return nil }
+
+        var missingOutput = 0
+        var missingDeliverables = 0
+        var missingScopeBounds = 0
+        var contradictionCount = 0
+        var highTokenCount = 0
+
+        for prompt in sample {
+            let analysis = PromptHeuristics.analyze(prompt, originalCodeFenceBlocks: 0)
+            if !(analysis.hasOutputFormatHeading || analysis.hasOutputTemplate) {
+                missingOutput += 1
+            }
+            if !analysis.hasEnumeratedDeliverables {
+                missingDeliverables += 1
+            }
+            if analysis.scopeLeak && !analysis.hasScopeBounds {
+                missingScopeBounds += 1
+            }
+            if !analysis.contradictions.isEmpty {
+                contradictionCount += analysis.contradictions.count
+            }
+            if analysis.tokenEstimate > 900 {
+                highTokenCount += 1
+            }
+        }
+
+        let total = Double(sample.count)
+        var tuned = HeuristicScoringWeights.defaults
+
+        tuned.outputFormat += Int((Double(missingOutput) / total) * 8.0)
+        tuned.deliverables += Int((Double(missingDeliverables) / total) * 8.0)
+        tuned.scopeBounds += Int((Double(missingScopeBounds) / total) * 5.0)
+        tuned.tokenPenaltyBase -= Int((Double(highTokenCount) / total) * 5.0)
+        tuned.contradictionPenalty -= Int((Double(contradictionCount) / total) * 6.0)
+
+        return tuned.clamped()
+    }
+
+    private static func resolveWeights(for context: HeuristicOptimizationContext) -> WeightResolution {
+        if let local = context.localWeights?.clamped() {
+            return WeightResolution(weights: local, source: .local)
+        }
+
+        if let learned = learnWeights(from: context.historyPrompts) {
+            return WeightResolution(weights: learned, source: .learned)
+        }
+
+        return WeightResolution(weights: .defaults, source: .defaults)
+    }
+
+    private static func buildCacheKey(
+        input: String,
+        context: HeuristicOptimizationContext,
+        weights: HeuristicScoringWeights
+    ) -> String {
+        "\(context.target.rawValue)|\(context.scenario.rawValue)|\(context.historyPrompts.count)|\(weights.signature)|\(input)"
+    }
+
+    private static func detectGaps(
+        input: String,
+        analysis: PromptAnalysis,
+        context: HeuristicOptimizationContext,
+        policy: DomainPolicy
+    ) -> GapProfile {
+        let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
+        let hasKnownHeadings = parseBlocks(from: input).blocks.contains(where: { $0.key != nil })
+        let needsCanonicalization = hasKnownHeadings && !isLikelyCanonicalOrder(input)
+        let needsSentenceRewrite = analysis.ambiguityCount > 0 || containsHedgingLexicon(in: input)
+        let needsDedupe = hasDuplicateNormalizedLines(in: input)
+
+        let domainMissing = !policy.requiredKeywords.isEmpty && !containsAllKeywords(policy.requiredKeywords, in: input)
+        let missingGateSection = policy.requiredSectionsForAmbiguity.contains { key in
+            !containsHeading(key.headingTitle, in: input)
+        }
+
+        return GapProfile(
+            needsCanonicalization: needsCanonicalization,
+            needsContradictionRepair: !analysis.contradictions.isEmpty,
+            needsSentenceRewrite: needsSentenceRewrite,
+            needsDeliverables: !analysis.hasEnumeratedDeliverables,
+            needsOutputFormat: !(analysis.hasOutputFormatHeading || analysis.hasOutputTemplate),
+            needsSuccessCriteria: ambiguous && !analysis.hasSuccessCriteriaHeading,
+            needsScopeBounds: analysis.scopeLeak && !analysis.hasScopeBounds,
+            needsQuestions: ambiguous && !analysis.hasQuestionsHeading,
+            needsDomainPack: domainMissing,
+            needsQualityGate: ambiguous && missingGateSection,
+            needsDedupe: needsDedupe
         )
     }
 
-    private static func scoreCandidate(analysis: PromptAnalysis) -> ScoreResult {
+    private static func buildTransformPlans(from gaps: GapProfile) -> [[TransformKey]] {
+        var ordered: [TransformKey] = []
+
+        if gaps.needsContradictionRepair { ordered.append(.contradictionRepair) }
+        if gaps.needsSentenceRewrite { ordered.append(.sentenceRewrite) }
+        if gaps.needsCanonicalization { ordered.append(.canonicalize) }
+        if gaps.needsDeliverables { ordered.append(.deliverablesInference) }
+        if gaps.needsOutputFormat { ordered.append(.outputFormat) }
+        if gaps.needsSuccessCriteria { ordered.append(.successCriteria) }
+        if gaps.needsScopeBounds { ordered.append(.scopeBounds) }
+        if gaps.needsQuestions { ordered.append(.questions) }
+        if gaps.needsDomainPack { ordered.append(.domainPack) }
+        if gaps.needsQualityGate { ordered.append(.qualityGate) }
+        if gaps.needsDedupe { ordered.append(.dedupe) }
+
+        var plans: [[TransformKey]] = ordered.map { [$0] }
+
+        let structuralBundle = ordered.filter {
+            [.contradictionRepair, .sentenceRewrite, .deliverablesInference, .outputFormat, .scopeBounds, .questions, .successCriteria, .domainPack, .qualityGate, .dedupe].contains($0)
+        }
+
+        if !structuralBundle.isEmpty {
+            plans.append(structuralBundle)
+        }
+
+        let formatBundle = ordered.filter {
+            [.deliverablesInference, .outputFormat, .successCriteria, .questions, .qualityGate].contains($0)
+        }
+        if formatBundle.count >= 2 {
+            plans.append(formatBundle)
+        }
+
+        if ordered.contains(.domainPack) {
+            var domainPlan: [TransformKey] = [.domainPack]
+            if ordered.contains(.qualityGate) { domainPlan.append(.qualityGate) }
+            if ordered.contains(.deliverablesInference) { domainPlan.append(.deliverablesInference) }
+            if ordered.contains(.outputFormat) { domainPlan.append(.outputFormat) }
+            plans.append(domainPlan)
+        }
+
+        return Array(plans.prefix(maxCandidateCount - 1))
+    }
+
+    private static func applyTransforms(
+        _ transforms: [TransformKey],
+        to input: String,
+        context: HeuristicOptimizationContext,
+        policy: DomainPolicy
+    ) -> String {
+        guard !transforms.isEmpty else { return input }
+
+        var text = input
+        for transform in transforms {
+            switch transform {
+            case .canonicalize:
+                text = canonicalizeCandidate(text)
+            case .contradictionRepair:
+                text = contradictionRepairCandidate(text)
+            case .sentenceRewrite:
+                text = sentenceRewriteCandidate(text)
+            case .deliverablesInference:
+                text = deliverablesCandidate(text, context: context)
+            case .outputFormat:
+                text = outputFormatCandidate(text, context: context)
+            case .successCriteria:
+                text = successCriteriaCandidate(text)
+            case .scopeBounds:
+                text = scopeBoundsCandidate(text)
+            case .questions:
+                text = questionsCandidate(text)
+            case .domainPack:
+                text = domainPackCandidate(text, context: context, policy: policy)
+            case .qualityGate:
+                text = qualityGateCandidate(text, context: context, policy: policy)
+            case .dedupe:
+                text = dedupeCandidate(text)
+            }
+        }
+
+        return text
+    }
+
+    private static func scoreCandidate(
+        analysis: PromptAnalysis,
+        text: String,
+        weights: HeuristicScoringWeights,
+        context: HeuristicOptimizationContext,
+        policy: DomainPolicy
+    ) -> ScoreResult {
         var score = 0
         var breakdown: [String: Int] = [:]
         var warnings: [String] = []
 
         if analysis.hasOutputFormatHeading || analysis.hasOutputTemplate {
-            score += 20
-            breakdown["output_format"] = 20
+            score += weights.outputFormat
+            breakdown["output_format"] = weights.outputFormat
         } else {
-            score -= 10
-            breakdown["missing_output_format"] = -10
+            let penalty = -max(4, weights.outputFormat / 2)
+            score += penalty
+            breakdown["missing_output_format"] = penalty
         }
 
         if analysis.hasEnumeratedDeliverables {
-            score += 15
-            breakdown["enumerated_deliverables"] = 15
+            score += weights.deliverables
+            breakdown["enumerated_deliverables"] = weights.deliverables
         } else {
-            score -= 10
-            breakdown["missing_deliverables"] = -10
+            let penalty = -max(4, weights.deliverables / 2)
+            score += penalty
+            breakdown["missing_deliverables"] = penalty
         }
 
         if analysis.hasConstraintsHeading && analysis.hasStrongConstraintMarkers {
-            score += 10
-            breakdown["strong_constraints"] = 10
+            score += weights.constraints
+            breakdown["strong_constraints"] = weights.constraints
         }
 
-        let ambiguityHigh = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
-
-        if ambiguityHigh && analysis.hasSuccessCriteriaHeading {
-            score += 10
-            breakdown["success_criteria_for_ambiguity"] = 10
+        let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
+        if ambiguous && analysis.hasSuccessCriteriaHeading {
+            score += weights.successCriteria
+            breakdown["success_criteria_for_ambiguity"] = weights.successCriteria
         }
 
         if analysis.scopeLeak && analysis.hasScopeBounds {
-            score += 8
-            breakdown["scope_bounded"] = 8
+            score += weights.scopeBounds
+            breakdown["scope_bounded"] = weights.scopeBounds
         }
 
-        if ambiguityHigh && analysis.hasQuestionsHeading {
-            score += 5
-            breakdown["questions_for_ambiguity"] = 5
+        if ambiguous && analysis.hasQuestionsHeading {
+            score += weights.questions
+            breakdown["questions_for_ambiguity"] = weights.questions
         }
 
-        let exampleBonus = min(10, analysis.examplesCount * 5)
+        let exampleBonus = min(12, analysis.examplesCount * weights.examplesPerUnit)
         if exampleBonus > 0 {
             score += exampleBonus
             breakdown["examples"] = exampleBonus
         }
 
+        if containsAllKeywords(policy.requiredKeywords, in: text) {
+            score += weights.domainPackBonus
+            breakdown["domain_pack"] = weights.domainPackBonus
+        }
+
+        if !policy.requiredSectionsForAmbiguity.contains(where: { !containsHeading($0.headingTitle, in: text) }) {
+            score += weights.qualityGateBonus
+            breakdown["quality_gate"] = weights.qualityGateBonus
+        }
+
         if analysis.tokenEstimate > 900 {
-            let scaledPenalty = -8 - min(12, ((analysis.tokenEstimate - 900) / 300) * 2)
+            let scaledPenalty = weights.tokenPenaltyBase - min(12, ((analysis.tokenEstimate - 900) / 300) * 2)
             score += scaledPenalty
             breakdown["token_penalty"] = scaledPenalty
             warnings.append("Token estimate is high: \(analysis.tokenEstimate).")
         }
 
         if !analysis.contradictions.isEmpty {
-            score -= 8
-            breakdown["contradictions"] = -8
+            score += weights.contradictionPenalty
+            breakdown["contradictions"] = weights.contradictionPenalty
             warnings.append(contentsOf: analysis.contradictions)
         }
 
         if PromptHeuristics.usesCurlyVariablePlaceholders && analysis.unresolvedPlaceholderCount > 0 {
-            score -= 6
-            breakdown["unresolved_placeholders"] = -6
+            score += weights.unresolvedPlaceholderPenalty
+            breakdown["unresolved_placeholders"] = weights.unresolvedPlaceholderPenalty
             warnings.append("Unresolved placeholders detected: \(analysis.unresolvedPlaceholderCount).")
         }
 
-        return ScoreResult(score: score, breakdown: breakdown, warnings: warnings)
+        if context.scenario == .jsonStructuredOutput && !text.localizedCaseInsensitiveContains("json") {
+            score -= 6
+            breakdown["json_mismatch"] = -6
+        }
+
+        return ScoreResult(score: score, breakdown: breakdown, warnings: dedupePreservingOrder(warnings))
+    }
+
+    private static func structuralDelta(
+        baselineText: String,
+        baseline: PromptAnalysis,
+        candidateText: String,
+        candidate: PromptAnalysis,
+        context: HeuristicOptimizationContext,
+        policy: DomainPolicy
+    ) -> StructuralDelta {
+        var gain = 0
+
+        if !(baseline.hasOutputFormatHeading || baseline.hasOutputTemplate) && (candidate.hasOutputFormatHeading || candidate.hasOutputTemplate) {
+            gain += 2
+        }
+
+        if !baseline.hasEnumeratedDeliverables && candidate.hasEnumeratedDeliverables {
+            gain += 2
+        }
+
+        if (baseline.ambiguityCount >= 2 || baseline.isVagueGoal) {
+            if !baseline.hasSuccessCriteriaHeading && candidate.hasSuccessCriteriaHeading {
+                gain += 1
+            }
+            if !baseline.hasQuestionsHeading && candidate.hasQuestionsHeading {
+                gain += 1
+            }
+        }
+
+        if baseline.scopeLeak && !baseline.hasScopeBounds && candidate.hasScopeBounds {
+            gain += 1
+        }
+
+        if !baseline.contradictions.isEmpty && candidate.contradictions.count < baseline.contradictions.count {
+            gain += 2
+        }
+
+        if containsAllKeywords(policy.requiredKeywords, in: candidateText) && !containsAllKeywords(policy.requiredKeywords, in: baselineText) {
+            gain += 2
+        }
+
+        let baseLength = max(1, baselineText.count)
+        let growthRatio = Double(candidateText.count) / Double(baseLength)
+        let meaningful = gain >= 2
+
+        return StructuralDelta(gain: gain, growthRatio: growthRatio, meaningful: meaningful)
+    }
+
+    private static func shouldPromote(
+        best: (candidate: Candidate, score: ScoreResult, analysis: PromptAnalysis),
+        baseline: (candidate: Candidate, score: ScoreResult, analysis: PromptAnalysis),
+        delta: StructuralDelta
+    ) -> Bool {
+        guard best.candidate.title != "0 Baseline" else { return true }
+
+        let scoreGain = best.score.score - baseline.score.score
+        if scoreGain < 1 {
+            return false
+        }
+
+        if !delta.meaningful {
+            return false
+        }
+
+        if delta.growthRatio > 1.8 && delta.gain < 2 {
+            return false
+        }
+
+        return true
     }
 
     private static func canonicalizeCandidate(_ input: String) -> String {
@@ -222,23 +774,73 @@ enum HeuristicPromptOptimizer {
         }
     }
 
-    private static func deliverablesCandidate(_ input: String) -> String {
+    private static func contradictionRepairCandidate(_ input: String) -> String {
         transformPreservingCodeFences(input) { text in
             let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
-            guard !analysis.hasEnumeratedDeliverables else { return text }
-            return appendSection(
-                to: text,
-                title: "Deliverables",
-                body: [
-                    "1. Provide the primary output artifact.",
-                    "2. Include implementation or action steps in deterministic order.",
-                    "3. Include validation evidence for each major requirement."
-                ]
-            )
+            guard !analysis.contradictions.isEmpty else { return text }
+
+            let shielded = PromptHeuristics.shieldProtectedLiterals(in: text)
+            var edited = shielded.shielded
+
+            for replacement in RegexBank.contradictionReplacements {
+                edited = replacement.regex.stringByReplacingMatches(
+                    in: edited,
+                    options: [],
+                    range: NSRange(edited.startIndex..<edited.endIndex, in: edited),
+                    withTemplate: replacement.replacement
+                )
+            }
+
+            if analysis.contradictions.contains(where: { $0.localizedCaseInsensitiveContains("concise") }) {
+                edited = appendSection(
+                    to: edited,
+                    title: "Constraints",
+                    body: ["- Keep output concise while remaining scope-complete."]
+                )
+            }
+
+            if analysis.contradictions.contains(where: { $0.localizedCaseInsensitiveContains("No-browsing") }) {
+                edited = appendSection(
+                    to: edited,
+                    title: "Constraints",
+                    body: ["- Use provided/local sources only; do not browse online sources."]
+                )
+            }
+
+            if analysis.contradictions.contains(where: { $0.localizedCaseInsensitiveContains("No-code") }) {
+                edited = appendSection(
+                    to: edited,
+                    title: "Deliverables",
+                    body: [
+                        "1. Provide a non-code implementation plan.",
+                        "2. Provide validation steps without executable code."
+                    ]
+                )
+            }
+
+            return PromptHeuristics.restoreProtectedLiterals(in: edited, table: shielded.table)
         }
     }
 
-    private static func outputFormatCandidate(_ input: String) -> String {
+    private static func sentenceRewriteCandidate(_ input: String) -> String {
+        transformPreservingCodeFences(input) { text in
+            let shielded = PromptHeuristics.shieldProtectedLiterals(in: text)
+            let rewritten = rewriteSentences(in: shielded.shielded)
+            return PromptHeuristics.restoreProtectedLiterals(in: rewritten, table: shielded.table)
+        }
+    }
+
+    private static func deliverablesCandidate(_ input: String, context: HeuristicOptimizationContext) -> String {
+        transformPreservingCodeFences(input) { text in
+            let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
+            guard !analysis.hasEnumeratedDeliverables else { return text }
+
+            let inferred = inferDeliverables(from: text, context: context)
+            return appendSection(to: text, title: "Deliverables", body: inferred)
+        }
+    }
+
+    private static func outputFormatCandidate(_ input: String, context: HeuristicOptimizationContext) -> String {
         transformPreservingCodeFences(input) { text in
             let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
             guard !(analysis.hasOutputFormatHeading || analysis.hasOutputTemplate) else { return text }
@@ -246,16 +848,7 @@ enum HeuristicPromptOptimizer {
             return appendSection(
                 to: text,
                 title: "Output Format",
-                body: [
-                    "Use this markdown template exactly:",
-                    "1. Summary: <one paragraph>",
-                    "2. Deliverables:",
-                    "   - <item 1>",
-                    "   - <item 2>",
-                    "3. Validation:",
-                    "   - <check 1>",
-                    "   - <check 2>"
-                ]
+                body: outputFormatLines(for: context)
             )
         }
     }
@@ -298,8 +891,8 @@ enum HeuristicPromptOptimizer {
     private static func questionsCandidate(_ input: String) -> String {
         transformPreservingCodeFences(input) { text in
             let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
-            let ambiguityHigh = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
-            guard ambiguityHigh && !analysis.hasQuestionsHeading else { return text }
+            let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
+            guard ambiguous && !analysis.hasQuestionsHeading else { return text }
 
             return appendSection(
                 to: text,
@@ -313,40 +906,101 @@ enum HeuristicPromptOptimizer {
         }
     }
 
-    private static func deHedgedCandidate(_ input: String) -> String {
+    private static func domainPackCandidate(
+        _ input: String,
+        context: HeuristicOptimizationContext,
+        policy: DomainPolicy
+    ) -> String {
         transformPreservingCodeFences(input) { text in
-            let shielded = PromptHeuristics.shieldProtectedLiterals(in: text)
-            var edited = shielded.shielded
+            var output = text
+            for section in policy.supplementalSections {
+                output = appendSection(to: output, title: section.title, body: section.body)
+            }
 
-            let replacements: [(pattern: String, replacement: String)] = [
-                (#"\bcould you\b"#, ""),
-                (#"\btry to\b"#, ""),
-                (#"\bif possible\b"#, ""),
-                (#"\bideally\b"#, ""),
-                (#"\bmaybe\b"#, ""),
-                (#"\bmight\b"#, "must"),
-                (#"\bas needed\b"#, "when required")
-            ]
-
-            for replacement in replacements {
-                edited = replacingRegex(
-                    replacement.pattern,
-                    in: edited,
-                    with: replacement.replacement,
-                    options: [.caseInsensitive]
+            if context.target == .perplexity {
+                output = appendSection(
+                    to: output,
+                    title: "Constraints",
+                    body: ["- Cite primary sources with direct URLs for factual claims."]
                 )
             }
 
-            let normalizedLines = edited.components(separatedBy: .newlines).map { line in
-                let leadingWhitespace = line.prefix { $0 == " " || $0 == "\t" }
-                let content = String(line.dropFirst(leadingWhitespace.count))
-                    .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
-                    .replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
-                return String(leadingWhitespace) + content
+            if context.target == .agenticIDE {
+                output = appendMissingSections(
+                    to: output,
+                    sections: [
+                        ("Proposed File Changes", [
+                            "1. List files to modify with short rationale.",
+                            "2. Keep patch scope minimal and deterministic."
+                        ]),
+                        ("Validation Commands", [
+                            "1. Run focused tests first.",
+                            "2. Run full suite only if focused tests pass."
+                        ])
+                    ]
+                )
             }
 
-            let normalized = normalizedLines.joined(separator: "\n")
-            return PromptHeuristics.restoreProtectedLiterals(in: normalized, table: shielded.table)
+            return output
+        }
+    }
+
+    private static func qualityGateCandidate(
+        _ input: String,
+        context: HeuristicOptimizationContext,
+        policy: DomainPolicy
+    ) -> String {
+        transformPreservingCodeFences(input) { text in
+            var output = text
+            let goalSeed = extractGoalSeed(from: text)
+            let inferredDeliverables = inferDeliverables(from: text, context: context)
+
+            for key in policy.requiredSectionsForAmbiguity {
+                if containsHeading(key.headingTitle, in: output) {
+                    continue
+                }
+
+                switch key {
+                case .goal:
+                    output = appendSection(to: output, title: key.headingTitle, body: [goalSeed])
+                case .constraints:
+                    output = appendSection(
+                        to: output,
+                        title: key.headingTitle,
+                        body: [
+                            "- Keep behavior deterministic and reproducible.",
+                            "- Preserve fenced code blocks and protected literals exactly."
+                        ]
+                    )
+                case .deliverables:
+                    output = appendSection(to: output, title: key.headingTitle, body: inferredDeliverables)
+                case .outputFormat:
+                    output = appendSection(to: output, title: key.headingTitle, body: outputFormatLines(for: context))
+                case .questions:
+                    output = appendSection(
+                        to: output,
+                        title: key.headingTitle,
+                        body: [
+                            "- Which acceptance checks are mandatory?",
+                            "- Which files/systems are strictly out of scope?"
+                        ]
+                    )
+                case .successCriteria:
+                    output = appendSection(
+                        to: output,
+                        title: key.headingTitle,
+                        body: [
+                            "- Required sections are present and actionable.",
+                            "- Constraints and output structure are consistent.",
+                            "- No contradictory instructions remain."
+                        ]
+                    )
+                case .context:
+                    output = appendSection(to: output, title: key.headingTitle, body: ["Use only the context provided in this prompt."])
+                }
+            }
+
+            return output
         }
     }
 
@@ -358,7 +1012,12 @@ enum HeuristicPromptOptimizer {
             var previousWasBlank = false
 
             for line in lines {
-                let trimmedTrailing = line.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
+                let trimmedTrailing = RegexBank.trailingWhitespace.stringByReplacingMatches(
+                    in: line,
+                    options: [],
+                    range: NSRange(line.startIndex..<line.endIndex, in: line),
+                    withTemplate: ""
+                )
                 let stripped = trimmedTrailing.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if stripped.isEmpty {
@@ -370,7 +1029,13 @@ enum HeuristicPromptOptimizer {
                 }
 
                 previousWasBlank = false
-                let normalized = stripped.lowercased().replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                let normalized = RegexBank.normalizedWhitespace.stringByReplacingMatches(
+                    in: stripped.lowercased(),
+                    options: [],
+                    range: NSRange(stripped.startIndex..<stripped.endIndex, in: stripped),
+                    withTemplate: " "
+                )
+
                 if seen.insert(normalized).inserted {
                     output.append(trimmedTrailing)
                 }
@@ -382,95 +1047,283 @@ enum HeuristicPromptOptimizer {
 
     private static func transformPreservingCodeFences(_ input: String, transform: (String) -> String) -> String {
         let segments = PromptTextGuards.splitByCodeFences(input)
-        var merged = ""
-        var replacements: [String: String] = [:]
-        var fenceIndex = 0
+        var rebuilt = ""
 
-        for segment in segments {
-            switch segment {
+        for index in segments.indices {
+            let previous = index > 0 ? segments[index - 1] : nil
+            let next = index + 1 < segments.count ? segments[index + 1] : nil
+
+            switch segments[index] {
+            case .codeFence(let code):
+                var safeCode = code
+                if !rebuilt.isEmpty && !rebuilt.hasSuffix("\n") {
+                    rebuilt.append("\n")
+                }
+                if case .text(let nextText)? = next, !nextText.hasPrefix("\n"), !safeCode.hasSuffix("\n") {
+                    safeCode.append("\n")
+                }
+                rebuilt.append(safeCode)
             case .text(let text):
-                merged.append(text)
-            case .codeFence(let fence):
-                let token = "__DEXCRAFT_CODE_FENCE_\(fenceIndex)__"
-                replacements[token] = fence
-                merged.append(token)
-                fenceIndex += 1
+                var transformed = transform(text)
+                if case .codeFence? = next, !transformed.hasSuffix("\n") {
+                    transformed.append("\n")
+                }
+                if case .codeFence? = previous, !transformed.hasPrefix("\n") {
+                    transformed = "\n" + transformed
+                }
+                rebuilt.append(transformed)
             }
         }
 
-        var transformed = transform(merged)
-        for (token, fence) in replacements {
-            transformed = transformed.replacingOccurrences(of: token, with: fence)
-        }
-
-        return transformed
+        return rebuilt
     }
 
-    private static func canonicalizeSections(in text: String) -> String {
-        let parsed = parseBlocks(from: text)
-        var known: [SectionKey: [String]] = [:]
-        var unknown: [HeadingBlock] = []
+    private static func rewriteSentences(in text: String) -> String {
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
 
-        for block in parsed.blocks {
-            if let key = block.key {
-                known[key, default: []].append(contentsOf: block.body)
-            } else {
-                unknown.append(block)
+        var output = ""
+        var cursor = text.startIndex
+
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            if cursor < range.lowerBound {
+                output.append(contentsOf: text[cursor..<range.lowerBound])
+            }
+
+            let sentence = String(text[range])
+            output.append(rewriteSentence(sentence))
+            cursor = range.upperBound
+            return true
+        }
+
+        if cursor < text.endIndex {
+            output.append(contentsOf: text[cursor..<text.endIndex])
+        }
+
+        return output
+    }
+
+    private static func rewriteSentence(_ sentence: String) -> String {
+        var rewritten = sentence
+
+        for replacement in RegexBank.sentenceReplacements {
+            let fullRange = NSRange(rewritten.startIndex..<rewritten.endIndex, in: rewritten)
+            rewritten = replacement.regex.stringByReplacingMatches(
+                in: rewritten,
+                options: [],
+                range: fullRange,
+                withTemplate: replacement.replacement
+            )
+        }
+
+        return normalizeSentenceWhitespace(rewritten)
+    }
+
+    private static func normalizeSentenceWhitespace(_ text: String) -> String {
+        let condensed = RegexBank.internalWhitespace.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(text.startIndex..<text.endIndex, in: text),
+            withTemplate: " "
+        )
+
+        return condensed
+            .replacingOccurrences(of: " ,", with: ",")
+            .replacingOccurrences(of: " .", with: ".")
+            .replacingOccurrences(of: " :", with: ":")
+            .replacingOccurrences(of: " ;", with: ";")
+            .replacingOccurrences(of: "  ", with: " ")
+    }
+
+    private static func inferDeliverables(from text: String, context: HeuristicOptimizationContext) -> [String] {
+        let nonCodeText = PromptTextGuards.splitByCodeFences(text).compactMap { segment -> String? in
+            if case let .text(value) = segment { return value }
+            return nil
+        }
+        .joined(separator: "\n")
+
+        let compact = nonCodeText.replacingOccurrences(of: "\n", with: " ")
+        let range = NSRange(compact.startIndex..<compact.endIndex, in: compact)
+        let matches = RegexBank.actionObject.matches(in: compact, options: [], range: range)
+
+        var items: [String] = []
+        for match in matches {
+            guard
+                let verbRange = Range(match.range(at: 1), in: compact),
+                let objectRange = Range(match.range(at: 2), in: compact)
+            else {
+                continue
+            }
+
+            let verb = String(compact[verbRange]).lowercased()
+            var object = String(compact[objectRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            object = object.trimmingCharacters(in: CharacterSet(charactersIn: ",.;:"))
+
+            guard !object.isEmpty else { continue }
+            let candidate = "\(capitalized(verb)) \(object)."
+            items.append(candidate)
+
+            if items.count >= 3 {
+                break
             }
         }
 
-        let preambleContent = parsed.preamble
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !preambleContent.isEmpty {
-            if known[.goal, default: []].isEmpty {
-                known[.goal] = [preambleContent]
-            } else if known[.context, default: []].isEmpty {
-                known[.context] = [preambleContent]
-            } else {
-                unknown.insert(
-                    HeadingBlock(title: "Context", key: nil, body: [preambleContent]),
-                    at: 0
-                )
-            }
+        if items.isEmpty {
+            items = defaultDeliverables(for: context)
         }
 
-        var rendered: [String] = []
-
-        for key in SectionKey.allCases {
-            let bodyLines = cleanBodyLines(known[key] ?? [])
-            guard !bodyLines.isEmpty else { continue }
-            rendered.append(renderSection(title: key.headingTitle, body: bodyLines))
+        if items.count < 3 {
+            items.append("Provide deterministic validation evidence for each major requirement.")
         }
 
-        for block in unknown {
-            let bodyLines = cleanBodyLines(block.body)
-            guard !bodyLines.isEmpty else { continue }
-            rendered.append(renderSection(title: block.title, body: bodyLines))
+        var numbered: [String] = []
+        for (index, item) in dedupePreservingOrder(items).prefix(3).enumerated() {
+            numbered.append("\(index + 1). \(item)")
         }
 
-        let candidate = rendered.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return candidate.isEmpty ? text : candidate
+        return numbered
     }
 
-    private static func appendSection(to text: String, title: String, body: [String]) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let section = renderSection(title: title, body: body)
-        if trimmed.isEmpty {
-            return section
+    private static func defaultDeliverables(for context: HeuristicOptimizationContext) -> [String] {
+        switch context.scenario {
+        case .cliAssistant:
+            return [
+                "Provide exact copy/paste shell commands in execution order.",
+                "Mark any optional command as explicit optional follow-up.",
+                "Include a deterministic verification command sequence."
+            ]
+        case .jsonStructuredOutput:
+            return [
+                "Return one valid JSON object that matches the required schema.",
+                "Keep key names stable and deterministic.",
+                "Include validation notes only as JSON fields when requested."
+            ]
+        case .ideCodingAssistant:
+            return [
+                "Produce an ordered plan and targeted patch summary.",
+                "List exact tests to add/update.",
+                "Provide deterministic validation commands."
+            ]
+        default:
+            return [
+                "Provide the primary requested artifact.",
+                "Provide ordered implementation steps.",
+                "Provide validation evidence for completion."
+            ]
         }
-        return trimmed + "\n\n" + section
     }
 
-    private static func renderSection(title: String, body: [String]) -> String {
-        "### \(title)\n" + body.joined(separator: "\n")
+    private static func outputFormatLines(for context: HeuristicOptimizationContext) -> [String] {
+        switch context.scenario {
+        case .jsonStructuredOutput:
+            return [
+                "Return JSON only.",
+                "No markdown, no prose, no code fences.",
+                "Use a stable object schema with deterministic key order."
+            ]
+        case .cliAssistant:
+            return [
+                "Return shell commands only unless explanation is explicitly requested.",
+                "Commands must be copy/paste runnable.",
+                "Use at most one shell comment line when a note is unavoidable."
+            ]
+        case .ideCodingAssistant:
+            return [
+                "Use markdown headings in this order: Plan, Unified Diff, Tests, Validation Commands.",
+                "Keep patch scope minimal and deterministic.",
+                "List exact files and test commands."
+            ]
+        case .toolUsingAgent:
+            return [
+                "Use sections: Plan, Tool Calls, Observations, Final Output.",
+                "Emit tool calls only when required data is missing.",
+                "Use explicit argument payloads for every tool call."
+            ]
+        default:
+            return [
+                "Use this markdown template exactly:",
+                "1. Summary: <one paragraph>",
+                "2. Deliverables:",
+                "   - <item 1>",
+                "   - <item 2>",
+                "3. Validation:",
+                "   - <check 1>",
+                "   - <check 2>"
+            ]
+        }
     }
 
-    private static func cleanBodyLines(_ body: [String]) -> [String] {
-        let text = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return [] }
-        return text.components(separatedBy: .newlines)
+    private static func domainPolicy(for context: HeuristicOptimizationContext) -> DomainPolicy {
+        var keywords: [String] = []
+        var sections: [SectionKey] = [.goal, .constraints, .deliverables, .outputFormat, .successCriteria]
+        var supplements: [(title: String, body: [String])] = []
+
+        switch context.scenario {
+        case .cliAssistant:
+            keywords += ["shell commands only", "copy/paste runnable"]
+            supplements.append(("Constraints", [
+                "- Return shell commands only unless explanation is requested.",
+                "- Keep commands deterministic and executable as written."
+            ]))
+        case .jsonStructuredOutput:
+            keywords += ["json", "no markdown"]
+            supplements.append(("Output Format", [
+                "Return JSON only.",
+                "No markdown, no prose, no code fences."
+            ]))
+        case .ideCodingAssistant:
+            keywords += ["Unified Diff", "Validation Commands"]
+            supplements.append(("Deliverables", [
+                "1. Plan with deterministic ordered steps.",
+                "2. Unified Diff limited to touched files.",
+                "3. Tests and validation commands."
+            ]))
+        case .researchSummarization:
+            keywords += ["Citations", "Confidence"]
+            supplements.append(("Output Format", [
+                "Use sections: Summary, Citations, Confidence.",
+                "Citations must include source URLs.",
+                "Assign confidence labels: High/Medium/Low."
+            ]))
+        case .toolUsingAgent:
+            keywords += ["Plan", "Tool Calls", "Final Output"]
+            sections.append(.questions)
+            supplements.append(("Output Format", [
+                "Use sections: Plan, Tool Calls, Observations, Final Output.",
+                "Keep each tool call explicit and minimal."
+            ]))
+        case .longformWriting:
+            keywords += ["outline", "narrative continuity"]
+            supplements.append(("Success Criteria", [
+                "- Includes coherent outline and narrative continuity.",
+                "- Maintains tone consistency across sections."
+            ]))
+        default:
+            keywords += ["deterministic", "validation"]
+        }
+
+        switch context.target {
+        case .perplexity:
+            keywords += ["primary sources", "URL"]
+            supplements.append(("Constraints", [
+                "- Cite primary sources with direct URLs.",
+                "- Separate confirmed facts from assumptions."
+            ]))
+        case .agenticIDE:
+            keywords += ["Proposed File Changes", "Validation Commands"]
+            supplements.append(("Proposed File Changes", [
+                "1. List touched files and purpose.",
+                "2. Keep edits minimal and reversible."
+            ]))
+        case .claude, .geminiChatGPT:
+            break
+        }
+
+        return DomainPolicy(
+            requiredKeywords: dedupePreservingOrder(keywords),
+            requiredSectionsForAmbiguity: dedupeSectionKeysPreservingOrder(sections),
+            supplementalSections: supplements
+        )
     }
 
     private static func parseBlocks(from text: String) -> (preamble: [String], blocks: [HeadingBlock]) {
@@ -509,11 +1362,8 @@ enum HeuristicPromptOptimizer {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        let withoutHashes = trimmed.replacingOccurrences(
-            of: #"^#{1,6}\s*"#,
-            with: "",
-            options: .regularExpression
-        )
+        let withoutHashes = stripHeadingHashes(trimmed)
+        let normalized = withoutHashes.lowercased()
 
         let mapping: [(aliases: [String], key: SectionKey)] = [
             (["goal", "objective", "task"], .goal),
@@ -525,7 +1375,6 @@ enum HeuristicPromptOptimizer {
             (["success criteria", "acceptance criteria"], .successCriteria)
         ]
 
-        let normalized = withoutHashes.lowercased()
         for item in mapping {
             for alias in item.aliases {
                 if normalized == alias {
@@ -548,16 +1397,241 @@ enum HeuristicPromptOptimizer {
         return nil
     }
 
-    private static func replacingRegex(
-        _ pattern: String,
-        in text: String,
-        with template: String,
-        options: NSRegularExpression.Options
-    ) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
-            return text
+    private static func stripHeadingHashes(_ text: String) -> String {
+        RegexBank.headingPrefix.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(text.startIndex..<text.endIndex, in: text),
+            withTemplate: ""
+        )
+    }
+
+    private static func canonicalizeSections(in text: String) -> String {
+        let parsed = parseBlocks(from: text)
+        var known: [SectionKey: [String]] = [:]
+        var unknown: [HeadingBlock] = []
+
+        for block in parsed.blocks {
+            if let key = block.key {
+                known[key, default: []].append(contentsOf: block.body)
+            } else {
+                unknown.append(block)
+            }
         }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: template)
+
+        let preambleContent = parsed.preamble.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !preambleContent.isEmpty {
+            if known[.goal, default: []].isEmpty {
+                known[.goal] = [preambleContent]
+            } else if known[.context, default: []].isEmpty {
+                known[.context] = [preambleContent]
+            } else {
+                unknown.insert(HeadingBlock(title: "Context", key: nil, body: [preambleContent]), at: 0)
+            }
+        }
+
+        var rendered: [String] = []
+
+        for key in SectionKey.allCases {
+            let bodyLines = cleanBodyLines(known[key] ?? [])
+            guard !bodyLines.isEmpty else { continue }
+            rendered.append(renderSection(title: key.headingTitle, body: bodyLines))
+        }
+
+        for block in unknown {
+            let bodyLines = cleanBodyLines(block.body)
+            guard !bodyLines.isEmpty else { continue }
+            rendered.append(renderSection(title: block.title, body: bodyLines))
+        }
+
+        let candidate = rendered.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return candidate.isEmpty ? text : candidate
+    }
+
+    private static func appendSection(to text: String, title: String, body: [String]) -> String {
+        let cleaned = cleanBodyLines(body)
+        guard !cleaned.isEmpty else { return text }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let section = renderSection(title: title, body: cleaned)
+
+        if trimmed.isEmpty {
+            return section
+        }
+
+        if containsHeading(title, in: trimmed) {
+            return mergeIntoExistingSection(in: trimmed, title: title, lines: cleaned)
+        }
+
+        return trimmed + "\n\n" + section
+    }
+
+    private static func appendMissingSections(
+        to text: String,
+        sections: [(title: String, body: [String])]
+    ) -> String {
+        var output = text
+        for section in sections {
+            if !containsHeading(section.title, in: output) {
+                output = appendSection(to: output, title: section.title, body: section.body)
+            }
+        }
+        return output
+    }
+
+    private static func mergeIntoExistingSection(in text: String, title: String, lines: [String]) -> String {
+        guard !lines.isEmpty else { return text }
+
+        let parsed = parseBlocks(from: text)
+        var rendered: [String] = []
+        let target = normalizeHeading(title)
+
+        if !parsed.preamble.isEmpty {
+            rendered.append(parsed.preamble.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        var mergedAny = false
+
+        for block in parsed.blocks {
+            let normalizedTitle = normalizeHeading(block.title)
+            if normalizedTitle == target {
+                let mergedBody = dedupePreservingOrder(cleanBodyLines(block.body) + lines)
+                rendered.append(renderSection(title: block.title, body: mergedBody))
+                mergedAny = true
+            } else {
+                let body = cleanBodyLines(block.body)
+                if !body.isEmpty {
+                    rendered.append(renderSection(title: block.title, body: body))
+                }
+            }
+        }
+
+        if !mergedAny {
+            rendered.append(renderSection(title: title, body: lines))
+        }
+
+        return rendered
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func renderSection(title: String, body: [String]) -> String {
+        "### \(title)\n" + body.joined(separator: "\n")
+    }
+
+    private static func cleanBodyLines(_ body: [String]) -> [String] {
+        let text = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return [] }
+        return text.components(separatedBy: .newlines)
+    }
+
+    private static func extractGoalSeed(from text: String) -> String {
+        let nonCodeText = PromptTextGuards.splitByCodeFences(text).compactMap { segment -> String? in
+            if case let .text(value) = segment { return value }
+            return nil
+        }
+        .joined(separator: "\n")
+
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = nonCodeText
+
+        var firstSentence: String?
+        tokenizer.enumerateTokens(in: nonCodeText.startIndex..<nonCodeText.endIndex) { range, _ in
+            let candidate = nonCodeText[range].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !candidate.isEmpty {
+                firstSentence = candidate
+                return false
+            }
+            return true
+        }
+
+        return firstSentence ?? "Clarify the exact task and required output before execution."
+    }
+
+    private static func isLikelyCanonicalOrder(_ text: String) -> Bool {
+        let parsed = parseBlocks(from: text)
+        let indices = parsed.blocks.compactMap { $0.key?.rawValue }
+        guard indices.count > 1 else { return true }
+        return indices == indices.sorted()
+    }
+
+    private static func hasDuplicateNormalizedLines(in text: String) -> Bool {
+        let lines = text.components(separatedBy: .newlines)
+        var seen = Set<String>()
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            let normalized = trimmed.lowercased().replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            if !seen.insert(normalized).inserted {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func containsHedgingLexicon(in text: String) -> Bool {
+        let lowered = text.lowercased()
+        let needles = ["maybe", "if possible", "try to", "possibly", "ideally", "might", "best effort", "etc"]
+        return needles.contains(where: lowered.contains)
+    }
+
+    private static func containsHeading(_ heading: String, in text: String) -> Bool {
+        let normalizedHeading = normalizeHeading(heading)
+        let lines = text.components(separatedBy: .newlines)
+        for line in lines {
+            guard let parsed = parseHeading(line) else { continue }
+            if normalizeHeading(parsed.title) == normalizedHeading {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func normalizeHeading(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression)
+    }
+
+    private static func containsAllKeywords(_ keywords: [String], in text: String) -> Bool {
+        guard !keywords.isEmpty else { return true }
+        let lowered = text.lowercased()
+        return keywords.allSatisfy { lowered.contains($0.lowercased()) }
+    }
+
+    private static func capitalized(_ value: String) -> String {
+        guard let first = value.first else { return value }
+        return String(first).uppercased() + value.dropFirst()
+    }
+
+    private static func dedupeSectionKeysPreservingOrder(_ values: [SectionKey]) -> [SectionKey] {
+        var seen = Set<Int>()
+        var ordered: [SectionKey] = []
+        for value in values {
+            if seen.insert(value.rawValue).inserted {
+                ordered.append(value)
+            }
+        }
+        return ordered
+    }
+
+    private static func dedupePreservingOrder<T: Hashable>(_ values: [T]) -> [T] {
+        var seen = Set<T>()
+        var ordered: [T] = []
+        for value in values {
+            if seen.insert(value).inserted {
+                ordered.append(value)
+            }
+        }
+        return ordered
+    }
+
+    private static func fingerprint(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
     }
 }

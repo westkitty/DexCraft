@@ -5,6 +5,7 @@ final class StorageManager {
         case templates = "templates.json"
         case history = "history.json"
         case connectedModelSettings = "connected-model-settings.json"
+        case optimizerWeights = "optimizer-weights.json"
     }
 
     private let fileManager = FileManager.default
@@ -51,6 +52,14 @@ final class StorageManager {
 
     func saveConnectedModelSettings(_ settings: ConnectedModelSettings) {
         save(settings, to: .connectedModelSettings)
+    }
+
+    func loadOptimizerWeights() -> HeuristicScoringWeights? {
+        load(HeuristicScoringWeights.self, from: .optimizerWeights)
+    }
+
+    func saveOptimizerWeights(_ weights: HeuristicScoringWeights) {
+        save(weights.clamped(), to: .optimizerWeights)
     }
 
     private func ensureAppSupportDirectory() {

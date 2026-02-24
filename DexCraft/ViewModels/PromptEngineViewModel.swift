@@ -91,6 +91,7 @@ final class PromptEngineViewModel: ObservableObject {
     private let promptLibraryRepository: PromptLibraryRepository
     private let offlinePromptOptimizer = OfflinePromptOptimizer()
     private let variableRegex: NSRegularExpression = PromptEngineViewModel.compileVariableRegex()
+    private var learnedHeuristicWeights: HeuristicScoringWeights?
 
     private let noFillerConstraint = "Respond only with the requested output. Do not apologize or use conversational filler."
     private let markdownConstraint = "Use strict markdown structure and headings exactly as specified."
@@ -196,6 +197,7 @@ final class PromptEngineViewModel: ObservableObject {
         connectedModelSettings = storageManager.loadConnectedModelSettings()
         templates = storageManager.loadTemplates()
         history = storageManager.loadHistory()
+        learnedHeuristicWeights = storageManager.loadOptimizerWeights()
 
         let defaultTemplates = PromptTemplate.defaultPresets()
         if templates.isEmpty {
@@ -386,11 +388,21 @@ final class PromptEngineViewModel: ObservableObject {
         var heuristicResult: HeuristicOptimizationResult?
 
         if autoOptimizePrompt {
-            let result = HeuristicPromptOptimizer.optimize(baselinePrompt)
+            let context = HeuristicOptimizationContext(
+                target: selectedTarget,
+                scenario: selectedScenarioProfile,
+                historyPrompts: history.map(\.generatedPrompt),
+                localWeights: learnedHeuristicWeights
+            )
+            let result = HeuristicPromptOptimizer.optimize(baselinePrompt, context: context)
             heuristicResult = result
             let trimmedOptimized = result.optimizedText.trimmingCharacters(in: .whitespacesAndNewlines)
             selectedFinalPrompt = trimmedOptimized.isEmpty ? baselinePrompt : trimmedOptimized
             fallbackNotes.append("Heuristic optimizer selected: \(result.selectedCandidateTitle) (score \(result.score)).")
+            if let tuned = result.tunedWeights {
+                learnedHeuristicWeights = tuned
+                storageManager.saveOptimizerWeights(tuned)
+            }
             if !result.breakdown.isEmpty {
                 let summary = result.breakdown
                     .sorted { $0.key < $1.key }
@@ -460,6 +472,10 @@ final class PromptEngineViewModel: ObservableObject {
         history.insert(entry, at: 0)
         history = Array(history.prefix(50))
         storageManager.saveHistory(history)
+        if let tuned = HeuristicPromptOptimizer.learnWeights(from: history.map(\.generatedPrompt)) {
+            learnedHeuristicWeights = tuned
+            storageManager.saveOptimizerWeights(tuned)
+        }
     }
 
     func copyToClipboard() {
