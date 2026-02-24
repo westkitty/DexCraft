@@ -78,6 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         toggleDrawerMenuItem.target = self
         menu.addItem(toggleDrawerMenuItem)
 
+        let batchExportItem = NSMenuItem(title: "Run Batch Export", action: #selector(runBatchExport(_:)), keyEquivalent: "")
+        batchExportItem.target = self
+        menu.addItem(batchExportItem)
+
         let quitItem = NSMenuItem(title: "Quit DexCraft", action: #selector(quitApp(_:)), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(.separator())
@@ -104,6 +108,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quitApp(_ sender: Any?) {
         NSApp.terminate(sender)
+    }
+
+    @objc private func runBatchExport(_ sender: Any?) {
+        do {
+            let baseDir = BatchExportService.appSupportDirURL()
+            try BatchExportService.ensureDirExists(baseDir)
+
+            let inputURL = BatchExportService.inputsURL()
+            let outputURL = BatchExportService.outputsURL()
+            let fileManager = FileManager.default
+
+            if !fileManager.fileExists(atPath: inputURL.path) {
+                try BatchExportService.writeBatchInputsTemplate(to: inputURL)
+                showRevealAlert(
+                    title: "Created batch inputs template",
+                    message: "Template created at:\n\(inputURL.path)",
+                    revealURL: baseDir
+                )
+                return
+            }
+
+            let summary = try BatchExportService.runBatchExport(inputsURL: inputURL, outputsURL: outputURL)
+            showRevealAlert(
+                title: "Batch export complete",
+                message: "Processed: \(summary.processedCount)\nFailures: \(summary.failureCount)\nOutput: \(outputURL.path)",
+                revealURL: baseDir
+            )
+        } catch {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Batch export failed."
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    private func showRevealAlert(title: String, message: String, revealURL: URL) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "Reveal in Finder")
+        alert.addButton(withTitle: "OK")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([revealURL])
+        }
     }
 
     private func setupKeyboardShortcut() {

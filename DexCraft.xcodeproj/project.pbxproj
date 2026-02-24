@@ -66,6 +66,7 @@
 				A1B2C3D4E5F6012345675013 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671061 /* XCTest.framework */; };
 		A1B2C3D4E5F6012345675014 /* PromptOptimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671016 /* PromptOptimization.swift */; };
 		A1B2C3D4E5F6012345675015 /* OfflinePromptOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345671021 /* OfflinePromptOptimizer.swift */; };
+		A1B2C3D4E5F6012345675048 /* BatchExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F601234567102B /* BatchExportService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,6 +103,7 @@
 				A1B2C3D4E5F6012345671028 /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F6012345671029 /* PromptRestructurer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptRestructurer.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F601234567102A /* PromptFormattingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptFormattingEngine.swift; sourceTree = "<group>"; };
+				A1B2C3D4E5F601234567102B /* BatchExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchExportService.swift; sourceTree = "<group>"; };
 				A1B2C3D4E5F6012345671030 /* PromptEngineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEngineViewModel.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671040 /* PrimaryPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryPanelView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6012345671041 /* ResultPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultPanelView.swift; sourceTree = "<group>"; };
@@ -210,6 +212,7 @@
 						A1B2C3D4E5F6012345671028 /* ExportService.swift */,
 						A1B2C3D4E5F6012345671029 /* PromptRestructurer.swift */,
 						A1B2C3D4E5F601234567102A /* PromptFormattingEngine.swift */,
+						A1B2C3D4E5F601234567102B /* BatchExportService.swift */,
 					);
 			path = Services;
 			sourceTree = "<group>";
@@ -391,6 +394,7 @@
 						A1B2C3D4E5F6012345675034 /* ExportService.swift in Sources */,
 						A1B2C3D4E5F6012345675040 /* PromptRestructurer.swift in Sources */,
 						A1B2C3D4E5F6012345675043 /* PromptFormattingEngine.swift in Sources */,
+						A1B2C3D4E5F6012345675048 /* BatchExportService.swift in Sources */,
 						A1B2C3D4E5F601234567500A /* PromptEngineViewModel.swift in Sources */,
 				A1B2C3D4E5F601234567500B /* PrimaryPanelView.swift in Sources */,
 				A1B2C3D4E5F601234567500C /* ResultPanelView.swift in Sources */,
