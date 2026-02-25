@@ -1417,6 +1417,14 @@ final class PromptEngineViewModel: ObservableObject {
                 "Provide at least one example play sequence and one edge-case rule."
             ]
         case .softwareBuild:
+            let lowered = taskText.lowercased()
+            if lowered.contains("minecraft") {
+                return [
+                    "Define block/world systems (terrain generation scope, block types, and core placement/removal behavior).",
+                    "Specify survival-crafting loop requirements (resource gathering, crafting recipes, inventory/hotbar behavior).",
+                    "Provide deterministic validation checks for world interaction, inventory/crafting flows, and save/load consistency."
+                ]
+            }
             if selectedScenarioProfile == .ideCodingAssistant {
                 return [
                     "Define concrete functional requirements and identify affected files/components.",

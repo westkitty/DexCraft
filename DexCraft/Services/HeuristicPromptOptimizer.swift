@@ -1532,7 +1532,13 @@ enum HeuristicPromptOptimizer {
         let subject = extractGoalSeed(from: nonCodeText)
 
         var lines: [String]
-        if lowered.contains("platformer") {
+        if lowered.contains("minecraft") {
+            lines = [
+                "- Define block/world systems including terrain scope, block types, and deterministic placement/removal behavior.",
+                "- Specify survival-crafting loop behavior for resource gathering, recipes, inventory/hotbar management, and tool/item rules.",
+                "- Provide deterministic validation checks for world interaction, crafting/inventory consistency, and save/load correctness."
+            ]
+        } else if lowered.contains("platformer") {
             lines = [
                 "- Define deterministic player controls, movement physics, and core game loop for a 2D side-scroller.",
                 "- Specify level progression, obstacles/enemies, checkpoints, and completion conditions.",
@@ -2284,6 +2290,13 @@ enum HeuristicPromptOptimizer {
             ]
         case .softwareBuild:
             let lowered = sourceText.lowercased()
+            if lowered.contains("minecraft") {
+                return [
+                    "Define core Minecraft-style systems: block/world interaction, terrain scope, and deterministic player movement/physics expectations.",
+                    "Specify survival loop behavior: resource gathering, inventory/hotbar state, crafting recipes, and item placement/removal rules.",
+                    "Provide deterministic validation scenarios for world edits, crafting/inventory flows, and save/load persistence integrity."
+                ]
+            }
             if lowered.contains("platformer") {
                 return [
                     "Define player controls, movement physics, and progression goals for the 2D platformer.",
@@ -2347,6 +2360,13 @@ enum HeuristicPromptOptimizer {
                 "Include at least one standard-play example and one edge-case rule clarification."
             ].joined(separator: " ")
         case .softwareBuild:
+            if lowered.contains("minecraft") {
+                return [
+                    "Build a Minecraft-style clone specification with explicit mechanics for block placement/removal, terrain scope, and movement rules.",
+                    "Define resource gathering, crafting recipes, inventory/hotbar behavior, and item/tool state transitions deterministically.",
+                    "Include deterministic validation scenarios for world interaction, crafting/inventory consistency, and save/load persistence."
+                ].joined(separator: " ")
+            }
             if lowered.contains("chess") {
                 return [
                     "Build a complete chess game specification and implementation brief.",

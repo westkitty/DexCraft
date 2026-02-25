@@ -73,6 +73,23 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.contains("translate the request into concrete functional requirements"))
     }
 
+    func testForgePromptMinecraftCloneGetsDomainSpecificRequirements() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Build me a Minecraft Clone."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("minecraft"))
+        XCTAssertTrue(output.contains("crafting"))
+        XCTAssertTrue(output.contains("inventory"))
+        XCTAssertTrue(output.contains("block"))
+    }
+
     func testForgePromptGeneralListUsesSemanticRewriteInsteadOfGenericContract() {
         let (viewModel, cleanup) = makeViewModel()
         defer { cleanup() }
