@@ -9,12 +9,36 @@ enum PromptFormatStyle: String, Codable {
 
 struct ConnectedModelSettings: Codable, Equatable {
     static let unknownUnsetLabel = "unknown/unset"
+    static let defaultTinyModelIdentifier = "HuggingFaceTB/SmolLM2-135M-Instruct"
 
     // TODO: Replace defaults with exact connected model versions from Settings once known.
     var claudeModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
     var geminiChatGPTModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
     var perplexityModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
     var agenticIDEModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
+    var useEmbeddedTinyModel: Bool?
+    var embeddedTinyModelPath: String?
+    var embeddedTinyRuntimePath: String?
+    var embeddedTinyModelIdentifier: String?
+
+    var isEmbeddedTinyModelEnabled: Bool {
+        useEmbeddedTinyModel ?? false
+    }
+
+    var resolvedTinyModelPath: String? {
+        let cleaned = embeddedTinyModelPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    var resolvedTinyRuntimePath: String? {
+        let cleaned = embeddedTinyRuntimePath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    var resolvedTinyModelIdentifier: String {
+        let cleaned = embeddedTinyModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? Self.defaultTinyModelIdentifier : cleaned
+    }
 
     func modelNames(for target: PromptTarget) -> [String] {
         let raw: String

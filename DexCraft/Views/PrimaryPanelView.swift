@@ -453,9 +453,76 @@ struct PrimaryPanelView: View {
             .padding(.vertical, 6)
             .glassInset(cornerRadius: 8)
 
-            Text("All processing is local and deterministic. No network calls are made.")
+            Divider()
+                .padding(.vertical, 4)
+
+            Text("Embedded Tiny Model")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle(
+                "Use embedded tiny model for final rewrite (\(viewModel.embeddedTinyModelIdentifier))",
+                isOn: Binding(
+                    get: { viewModel.isEmbeddedTinyModelEnabled },
+                    set: { viewModel.setEmbeddedTinyModelEnabled($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .font(.caption2)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tiny Model (.gguf)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    TextField(
+                        "/path/to/SmolLM2-135M-Instruct-*.gguf",
+                        text: Binding(
+                            get: { viewModel.embeddedTinyModelPath },
+                            set: { viewModel.updateEmbeddedTinyModelPath($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    Button("Browse") {
+                        viewModel.browseEmbeddedTinyModelPath()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tiny Runtime (llama-cli)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    TextField(
+                        "/opt/homebrew/bin/llama-cli",
+                        text: Binding(
+                            get: { viewModel.embeddedTinyRuntimePath },
+                            set: { viewModel.updateEmbeddedTinyRuntimePath($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    Button("Browse") {
+                        viewModel.browseEmbeddedTinyRuntimePath()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            Text("When enabled, successful tiny-model output overrides heuristic output.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            if !viewModel.tinyModelStatus.isEmpty {
+                Text(viewModel.tinyModelStatus)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(10)
         .glassCard()

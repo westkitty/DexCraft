@@ -318,3 +318,184 @@ final class OfflinePromptOptimizer {
         return (temperature, topP, maxTokens)
     }
 }
+
+struct EmbeddedTinyModelRequest {
+    let prompt: String
+    let scenario: ScenarioProfile
+    let maxTokens: Int
+}
+
+struct EmbeddedTinyModelResult {
+    let output: String
+    let durationMs: Int
+    let runtimePath: String
+}
+
+enum EmbeddedTinyModelError: LocalizedError {
+    case runtimeNotFound
+    case modelNotFound
+    case processFailed(exitCode: Int32, detail: String)
+    case invalidOutput
+
+    var errorDescription: String? {
+        switch self {
+        case .runtimeNotFound:
+            return "Embedded tiny runtime not found. Configure llama.cpp `llama-cli` path in Settings."
+        case .modelNotFound:
+            return "Tiny model file not found. Configure SmolLM2-135M-Instruct GGUF path in Settings."
+        case .processFailed(let exitCode, let detail):
+            let cleanedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanedDetail.isEmpty {
+                return "Tiny model process failed with exit code \(exitCode)."
+            }
+            return "Tiny model process failed with exit code \(exitCode): \(cleanedDetail)"
+        case .invalidOutput:
+            return "Tiny model produced empty/invalid output."
+        }
+    }
+}
+
+final class EmbeddedTinyLLMService {
+    private let fileManager = FileManager.default
+
+    func rewrite(
+        request: EmbeddedTinyModelRequest,
+        settings: ConnectedModelSettings
+    ) throws -> EmbeddedTinyModelResult {
+        let runtimePath = try resolveRuntimePath(from: settings)
+        let modelPath = try resolveModelPath(from: settings)
+        let startedAt = Date()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: runtimePath)
+        process.arguments = buildArguments(
+            request: request,
+            modelPath: modelPath
+        )
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        let group = DispatchGroup()
+        var outputData = Data()
+        var errorData = Data()
+
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
+        process.waitUntilExit()
+        group.wait()
+        let output = String(decoding: outputData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let stderrOutput = String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard process.terminationStatus == 0 else {
+            throw EmbeddedTinyModelError.processFailed(
+                exitCode: process.terminationStatus,
+                detail: stderrOutput
+            )
+        }
+
+        guard !output.isEmpty else {
+            throw EmbeddedTinyModelError.invalidOutput
+        }
+
+        let cleaned = extractMarkedOutput(from: output)
+        guard !cleaned.isEmpty else {
+            throw EmbeddedTinyModelError.invalidOutput
+        }
+
+        let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000.0)
+        return EmbeddedTinyModelResult(
+            output: cleaned,
+            durationMs: durationMs,
+            runtimePath: runtimePath
+        )
+    }
+
+    private func buildArguments(
+        request: EmbeddedTinyModelRequest,
+        modelPath: String
+    ) -> [String] {
+        let prompt = renderPrompt(request: request)
+        return [
+            "-m", modelPath,
+            "-p", prompt,
+            "-n", String(max(64, request.maxTokens)),
+            "--temp", "0.2",
+            "--top-p", "0.9",
+            "--ctx-size", "2048",
+            "--simple-io",
+            "--no-display-prompt"
+        ]
+    }
+
+    private func renderPrompt(request: EmbeddedTinyModelRequest) -> String {
+        """
+        You are DexCraft's embedded tiny prompt optimizer.
+        Rewrite the input prompt so it is clearer and more executable.
+        Keep all hard constraints and deliverables.
+        Output only the rewritten prompt text.
+        Never add explanations.
+
+        Scenario: \(request.scenario.rawValue)
+        ---
+        \(request.prompt)
+        ---
+        """
+    }
+
+    private func extractMarkedOutput(from text: String) -> String {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty {
+            return ""
+        }
+        return cleaned
+    }
+
+    private func resolveRuntimePath(from settings: ConnectedModelSettings) throws -> String {
+        if let explicit = settings.resolvedTinyRuntimePath, fileManager.isExecutableFile(atPath: explicit) {
+            return explicit
+        }
+
+        if let bundled = Bundle.main.path(forResource: "llama-cli", ofType: nil),
+           fileManager.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
+
+        let candidatePaths = [
+            "/opt/homebrew/bin/llama-cli",
+            "/usr/local/bin/llama-cli"
+        ]
+
+        if let match = candidatePaths.first(where: { fileManager.isExecutableFile(atPath: $0) }) {
+            return match
+        }
+
+        throw EmbeddedTinyModelError.runtimeNotFound
+    }
+
+    private func resolveModelPath(from settings: ConnectedModelSettings) throws -> String {
+        if let explicit = settings.resolvedTinyModelPath, fileManager.fileExists(atPath: explicit) {
+            return explicit
+        }
+
+        if let bundled = Bundle.main.path(forResource: "SmolLM2-135M-Instruct-Q4_K_M", ofType: "gguf"),
+           fileManager.fileExists(atPath: bundled) {
+            return bundled
+        }
+
+        throw EmbeddedTinyModelError.modelNotFound
+    }
+}

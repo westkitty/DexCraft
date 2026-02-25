@@ -69,6 +69,7 @@ final class PromptEngineViewModel: ObservableObject {
     @Published private(set) var optimizationSuggestedTemperature: Double?
     @Published private(set) var optimizationSuggestedTopP: Double?
     @Published private(set) var optimizationSuggestedMaxTokens: Int?
+    @Published private(set) var tinyModelStatus: String = ""
 
     @Published private(set) var templates: [PromptTemplate] = []
     @Published private(set) var history: [PromptHistoryEntry] = []
@@ -90,6 +91,7 @@ final class PromptEngineViewModel: ObservableObject {
     private let storageManager: StorageManager
     private let promptLibraryRepository: PromptLibraryRepository
     private let offlinePromptOptimizer = OfflinePromptOptimizer()
+    private let embeddedTinyLLMService = EmbeddedTinyLLMService()
     private let variableRegex: NSRegularExpression = PromptEngineViewModel.compileVariableRegex()
     private var learnedHeuristicWeights: HeuristicScoringWeights?
 
@@ -202,6 +204,16 @@ final class PromptEngineViewModel: ObservableObject {
         self.storageManager = storageManager
         self.promptLibraryRepository = promptLibraryRepository
         connectedModelSettings = storageManager.loadConnectedModelSettings()
+        if connectedModelSettings.useEmbeddedTinyModel == nil {
+            connectedModelSettings.useEmbeddedTinyModel = true
+        }
+        if (connectedModelSettings.embeddedTinyModelIdentifier ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            connectedModelSettings.embeddedTinyModelIdentifier = ConnectedModelSettings.defaultTinyModelIdentifier
+        }
+        if connectedModelSettings.isEmbeddedTinyModelEnabled {
+            selectedModelFamily = .localCLIRuntimes
+        }
+        storageManager.saveConnectedModelSettings(connectedModelSettings)
         templates = storageManager.loadTemplates()
         history = storageManager.loadHistory()
         learnedHeuristicWeights = storageManager.loadOptimizerWeights()
@@ -231,6 +243,76 @@ final class PromptEngineViewModel: ObservableObject {
     func updateConnectedModelSettings(_ settings: ConnectedModelSettings) {
         connectedModelSettings = settings
         storageManager.saveConnectedModelSettings(settings)
+    }
+
+    var isEmbeddedTinyModelEnabled: Bool {
+        connectedModelSettings.isEmbeddedTinyModelEnabled
+    }
+
+    var embeddedTinyModelPath: String {
+        connectedModelSettings.resolvedTinyModelPath ?? ""
+    }
+
+    var embeddedTinyRuntimePath: String {
+        connectedModelSettings.resolvedTinyRuntimePath ?? ""
+    }
+
+    var embeddedTinyModelIdentifier: String {
+        connectedModelSettings.resolvedTinyModelIdentifier
+    }
+
+    func setEmbeddedTinyModelEnabled(_ enabled: Bool) {
+        var updated = connectedModelSettings
+        updated.useEmbeddedTinyModel = enabled
+        if enabled {
+            autoOptimizePrompt = true
+            selectedModelFamily = .localCLIRuntimes
+            if (updated.embeddedTinyModelIdentifier ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                updated.embeddedTinyModelIdentifier = ConnectedModelSettings.defaultTinyModelIdentifier
+            }
+        }
+        updateConnectedModelSettings(updated)
+    }
+
+    func updateEmbeddedTinyModelPath(_ path: String) {
+        var updated = connectedModelSettings
+        updated.embeddedTinyModelPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateConnectedModelSettings(updated)
+    }
+
+    func updateEmbeddedTinyRuntimePath(_ path: String) {
+        var updated = connectedModelSettings
+        updated.embeddedTinyRuntimePath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateConnectedModelSettings(updated)
+    }
+
+    func browseEmbeddedTinyModelPath() {
+        let panel = NSOpenPanel()
+        panel.title = "Select SmolLM2 GGUF Model"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if #available(macOS 11.0, *) {
+            if let ggufType = UTType(filenameExtension: "gguf") {
+                panel.allowedContentTypes = [ggufType]
+            }
+        } else {
+            panel.allowedFileTypes = ["gguf"]
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        updateEmbeddedTinyModelPath(url.path)
+    }
+
+    func browseEmbeddedTinyRuntimePath() {
+        let panel = NSOpenPanel()
+        panel.title = "Select llama-cli Runtime"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        updateEmbeddedTinyRuntimePath(url.path)
     }
 
     var qualityChecks: [QualityCheck] {
@@ -343,6 +425,10 @@ final class PromptEngineViewModel: ObservableObject {
         statusMessage = ""
         resolvedInput = substituteVariables(in: cleaned)
 
+        if connectedModelSettings.isEmbeddedTinyModelEnabled && selectedModelFamily != .localCLIRuntimes {
+            selectedModelFamily = .localCLIRuntimes
+        }
+
         let parsed = parseInputSections(from: resolvedInput)
         let canonical = buildCanonicalPrompt(from: parsed, target: selectedTarget)
         let mode = resolveRewriteMode(autoOptimize: autoOptimizePrompt, options: options)
@@ -430,6 +516,38 @@ final class PromptEngineViewModel: ObservableObject {
             }
         }
 
+        if autoOptimizePrompt && connectedModelSettings.isEmbeddedTinyModelEnabled {
+            let tokensHint = max(128, min(900, baselinePrompt.count / 3))
+            let request = EmbeddedTinyModelRequest(
+                prompt: selectedFinalPrompt,
+                scenario: selectedScenarioProfile,
+                maxTokens: tokensHint
+            )
+
+            do {
+                let tinyResult = try embeddedTinyLLMService.rewrite(
+                    request: request,
+                    settings: connectedModelSettings
+                )
+                let tinyOutput = tinyResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !tinyOutput.isEmpty {
+                    selectedFinalPrompt = tinyOutput
+                    tinyModelStatus = "Tiny model pass applied (\(tinyResult.durationMs)ms)"
+                    fallbackNotes.append("Embedded tiny model selected output (\(tinyResult.durationMs)ms).")
+                    fallbackNotes.append("Tiny runtime: \(tinyResult.runtimePath)")
+                } else {
+                    tinyModelStatus = "Tiny model returned empty output. Kept heuristic result."
+                    fallbackNotes.append("Tiny model returned empty output; heuristic result kept.")
+                }
+            } catch {
+                tinyModelStatus = "Tiny model unavailable: \(error.localizedDescription)"
+                fallbackNotes.append("Tiny model unavailable; heuristic result kept.")
+                fallbackNotes.append("Tiny model error: \(error.localizedDescription)")
+            }
+        } else {
+            tinyModelStatus = ""
+        }
+
         finalPrompt = selectedFinalPrompt
         generatedPrompt = selectedFinalPrompt
 
@@ -450,6 +568,15 @@ final class PromptEngineViewModel: ObservableObject {
             } else {
                 optimizationAppliedRules = output.appliedRules
                 optimizationWarnings = output.warnings
+            }
+            if !tinyModelStatus.isEmpty {
+                optimizationAppliedRules.insert("Embedded tiny model rewrite enabled (\(embeddedTinyModelIdentifier)).", at: 0)
+                if tinyModelStatus.localizedCaseInsensitiveContains("unavailable") ||
+                    tinyModelStatus.localizedCaseInsensitiveContains("empty") {
+                    optimizationWarnings.append(tinyModelStatus)
+                } else {
+                    optimizationAppliedRules.insert(tinyModelStatus, at: 1)
+                }
             }
             optimizationSystemPreamble = output.systemPreamble
             optimizationSuggestedTemperature = output.suggestedTemperature
@@ -2448,5 +2575,6 @@ final class PromptEngineViewModel: ObservableObject {
         optimizationSuggestedTemperature = nil
         optimizationSuggestedTopP = nil
         optimizationSuggestedMaxTokens = nil
+        tinyModelStatus = ""
     }
 }
