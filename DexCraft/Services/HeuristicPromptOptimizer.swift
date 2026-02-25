@@ -2462,7 +2462,6 @@ enum HeuristicPromptOptimizer {
         analysis: PromptAnalysis,
         context: HeuristicOptimizationContext
     ) -> Bool {
-        guard context.target != .agenticIDE else { return false }
         guard context.scenario == .generalAssistant || context.scenario == .longformWriting else { return false }
 
         let parsed = parseBlocks(from: input)
@@ -2496,10 +2495,6 @@ enum HeuristicPromptOptimizer {
         }
 
         if hasKnownHeadings || containsExplicitFormatCue(in: input) {
-            return true
-        }
-
-        if context.target == .agenticIDE {
             return true
         }
 

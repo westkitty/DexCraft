@@ -342,6 +342,18 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("deterministic"))
     }
 
+    func testGeneralAssistantSemanticRewriteStillWinsWhenTargetIsAgenticIDE() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Create a list of 10 different ways to tell somebody they smile like a dog.",
+            context: HeuristicOptimizationContext(target: .agenticIDE, scenario: .generalAssistant)
+        )
+
+        XCTAssertFalse(result.optimizedText.contains("### Output Contract"))
+        XCTAssertFalse(result.optimizedText.contains("### Deliverables"))
+        XCTAssertFalse(result.optimizedText.contains("### Goal"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("completion checks"))
+    }
+
     func testDomainPacksByTargetInjectExpectedPolicies() {
         let expectations: [(PromptTarget, [String])] = [
             (.claude, ["### Goal"]),

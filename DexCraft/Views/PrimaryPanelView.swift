@@ -97,6 +97,22 @@ struct PrimaryPanelView: View {
                 .toggleStyle(.switch)
                 .font(.caption)
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Target Environment")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Target Environment", selection: $viewModel.selectedTarget) {
+                    ForEach(PromptTarget.allCases) { target in
+                        Text(target.rawValue).tag(target)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassInset(cornerRadius: 8)
+            }
+
             if viewModel.autoOptimizePrompt {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Model Family")
@@ -122,23 +138,6 @@ struct PrimaryPanelView: View {
                     Picker("Scenario / Use Case", selection: $viewModel.selectedScenarioProfile) {
                         ForEach(ScenarioProfile.allCases) { scenario in
                             Text(scenario.rawValue).tag(scenario)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .glassInset(cornerRadius: 8)
-                }
-
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Target Environment")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Picker("Target Environment", selection: $viewModel.selectedTarget) {
-                        ForEach(PromptTarget.allCases) { target in
-                            Text(target.rawValue).tag(target)
                         }
                     }
                     .pickerStyle(.menu)

@@ -73,6 +73,22 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
     }
 
+    func testForgePromptGeneralListStaysSemanticWhenTargetStateIsAgenticIDE() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .agenticIDE
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Create a list of 10 different ways to tell somebody they smile like a dog."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt
+        XCTAssertFalse(output.contains("### Output Contract"))
+        XCTAssertFalse(output.contains("### Deliverables"))
+        XCTAssertFalse(output.contains("### Goal"))
+    }
+
     func testForgePromptPoemUsesPoemLanguageNotStoryScaffold() {
         let (viewModel, cleanup) = makeViewModel()
         defer { cleanup() }

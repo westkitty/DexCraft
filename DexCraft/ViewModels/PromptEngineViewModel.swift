@@ -862,7 +862,6 @@ final class PromptEngineViewModel: ObservableObject {
 
     private func shouldUseRawBaselineForHeuristicOptimization(rawInput: String, compiledPrompt: String) -> Bool {
         guard autoOptimizePrompt else { return false }
-        guard selectedTarget != .agenticIDE else { return false }
         guard selectedScenarioProfile == .generalAssistant || selectedScenarioProfile == .longformWriting else { return false }
 
         let trimmedRaw = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
