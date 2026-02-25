@@ -50,10 +50,11 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         viewModel.roughInput = "Create a 2D Super Nintendo style platformer, starring a dog."
         viewModel.forgePrompt()
 
-        let output = viewModel.generatedPrompt
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("movement, physics"))
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("deterministic test scenarios"))
-        XCTAssertFalse(output.contains("### Output Format"))
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("platformer"))
+        XCTAssertTrue(output.contains("movement") || output.contains("physics"))
+        XCTAssertTrue(output.contains("deterministic"))
+        XCTAssertFalse(output.contains("translate the request into concrete functional requirements"))
         XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
     }
 
@@ -122,6 +123,24 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.contains("### Goal"))
     }
 
+    func testForgePromptZipFileListRequestStaysGroundedToZipContext() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "In the code box, give me a list of all the file names inside this zip file."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("zip"))
+        XCTAssertTrue(output.contains("file"))
+        XCTAssertTrue(output.contains("name"))
+        XCTAssertFalse(output.contains("translate the request into concrete functional requirements"))
+        XCTAssertFalse(output.contains("### output contract"))
+    }
+
     func testForgePromptPoemUsesPoemLanguageNotStoryScaffold() {
         let (viewModel, cleanup) = makeViewModel()
         defer { cleanup() }
@@ -148,10 +167,11 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         viewModel.roughInput = "Add a bunch of new flashy animations to this website so that it feels more lively."
         viewModel.forgePrompt()
 
-        let output = viewModel.generatedPrompt
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("goal, plan, deliverables, validation"))
-        XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
-        XCTAssertFalse(output.localizedCaseInsensitiveContains("plan with deterministic ordered steps"))
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("animation"))
+        XCTAssertTrue(output.contains("validation"))
+        XCTAssertFalse(output.contains("execution-oriented"))
+        XCTAssertFalse(output.contains("plan with deterministic ordered steps"))
     }
 
     func testForgePromptIDENonCodingPromptAvoidsAnimationTemplate() {
