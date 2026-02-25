@@ -312,17 +312,17 @@ final class OfflinePromptOptimizerTests: XCTestCase {
     }
 
     func testStructuredScenariosStillInjectExpectedDomainPolicies() {
-        let expectations: [(ScenarioProfile, String)] = [
-            (.ideCodingAssistant, "Unified Diff"),
-            (.cliAssistant, "shell commands only"),
-            (.jsonStructuredOutput, "Return JSON only"),
-            (.researchSummarization, "Citations"),
-            (.toolUsingAgent, "Tool Calls")
+        let expectations: [(ScenarioProfile, String, String)] = [
+            (.ideCodingAssistant, "Fix flaky auth test and provide a minimal patch.", "Unified Diff"),
+            (.cliAssistant, "List tracked git files and run the test suite.", "shell commands only"),
+            (.jsonStructuredOutput, "Return deployment metadata as JSON.", "Return JSON only"),
+            (.researchSummarization, "Summarize these sources and label confidence.", "Citations"),
+            (.toolUsingAgent, "Use tools to gather missing data and return final output.", "Tool Calls")
         ]
 
-        for (scenario, needle) in expectations {
+        for (scenario, input, needle) in expectations {
             let result = HeuristicPromptOptimizer.optimize(
-                "make this better maybe",
+                input,
                 context: HeuristicOptimizationContext(target: .claude, scenario: scenario)
             )
             XCTAssertTrue(
@@ -330,6 +330,19 @@ final class OfflinePromptOptimizerTests: XCTestCase {
                 "Expected scenario \(scenario.rawValue) to include '\(needle)'."
             )
         }
+    }
+
+    func testIDENonCodingPromptDoesNotInjectAnimationTemplate() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Find the most useful file I've got about monkeys.",
+            context: HeuristicOptimizationContext(target: .geminiChatGPT, scenario: .ideCodingAssistant)
+        )
+
+        let lowered = result.optimizedText.lowercased()
+        XCTAssertFalse(lowered.contains("animation goals"))
+        XCTAssertFalse(lowered.contains("new animations"))
+        XCTAssertFalse(result.optimizedText.contains("### Output Contract"))
+        XCTAssertTrue(lowered.contains("monkeys"))
     }
 
     func testGeneralAssistantPrefersSemanticRewriteOverDomainPackScaffold() {

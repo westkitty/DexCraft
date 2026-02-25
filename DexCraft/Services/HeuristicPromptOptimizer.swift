@@ -1699,10 +1699,9 @@ enum HeuristicPromptOptimizer {
             ]))
         case .ideCodingAssistant:
             keywords += ["Unified Diff", "Validation Commands"]
-            supplements.append(("Output Format", [
-                "Use sections: Goal, Plan, Deliverables, Validation.",
-                "Include changed files and deterministic test/validation steps.",
-                "Do not duplicate deliverables across sections."
+            supplements.append(("Constraints", [
+                "- Keep patch scope minimal and deterministic.",
+                "- Include changed files and deterministic test/validation steps."
             ]))
         case .researchSummarization:
             keywords += ["Citations", "Confidence"]
@@ -2161,20 +2160,28 @@ enum HeuristicPromptOptimizer {
             return .gameDesign
         }
 
-        let softwareCueWords = [
-            "build", "implement", "refactor", "fix", "patch", "test", "app", "api", "function", "class", "script",
-            "repository", "file", "code", "swift", "python", "javascript", "react", "cli", "game", "website"
+        let lookupVerbWords = ["find", "locate", "search", "list", "show", "open", "read", "summarize", "describe", "explain"]
+        let buildVerbWords = ["build", "implement", "create", "develop", "fix", "refactor", "patch", "test", "code", "program", "make", "add", "update"]
+        let strongSoftwareCueWords = [
+            "api", "function", "class", "script", "repository", "code", "swift", "python", "javascript",
+            "typescript", "react", "cli", "frontend", "backend", "module", "component", "bug", "compile", "test", "git"
         ]
-        let buildVerbWords = ["build", "implement", "create", "develop", "fix", "refactor", "patch", "test", "code", "program"]
         let technicalObjectWords = [
-            "app", "application", "game", "platformer", "website", "api", "function", "class", "script", "repository", "file",
-            "codebase", "cli", "frontend", "backend", "chess", "tic", "tac", "toe"
+            "app", "application", "game", "platformer", "website", "api", "function", "class", "script", "repository",
+            "codebase", "cli", "frontend", "backend", "chess", "tic", "tac", "toe", "minecraft", "clone"
         ]
-
-        let hasSoftwareCue = softwareCueWords.contains(where: tokens.contains) ||
-            (buildVerbWords.contains(where: tokens.contains) && technicalObjectWords.contains(where: tokens.contains)) ||
+        let hasLookupIntent = lookupVerbWords.contains(where: tokens.contains)
+        let mentionsFilesOnly = tokens.contains("file") || tokens.contains("files") || tokens.contains("document") || tokens.contains("documents")
+        let hasBuildVerb = buildVerbWords.contains(where: tokens.contains)
+        let hasStrongSoftwareCue = strongSoftwareCueWords.contains(where: tokens.contains) ||
             lowered.contains("source code") ||
             lowered.contains("codebase")
+        if hasLookupIntent && mentionsFilesOnly && !hasBuildVerb && !hasStrongSoftwareCue {
+            return .general
+        }
+
+        let hasSoftwareCue = hasStrongSoftwareCue ||
+            (hasBuildVerb && technicalObjectWords.contains(where: tokens.contains))
         if hasSoftwareCue {
             return .softwareBuild
         }
@@ -2462,7 +2469,17 @@ enum HeuristicPromptOptimizer {
         analysis: PromptAnalysis,
         context: HeuristicOptimizationContext
     ) -> Bool {
-        guard context.scenario == .generalAssistant || context.scenario == .longformWriting else { return false }
+        let intent = inferIntent(from: input)
+        switch context.scenario {
+        case .generalAssistant, .longformWriting:
+            break
+        case .ideCodingAssistant:
+            guard intent == .general else { return false }
+        case .cliAssistant:
+            return false
+        default:
+            return false
+        }
 
         let parsed = parseBlocks(from: input)
         let hasKnownHeadings = parsed.blocks.contains(where: { $0.key != nil })
@@ -2499,7 +2516,11 @@ enum HeuristicPromptOptimizer {
         }
 
         switch context.scenario {
-        case .ideCodingAssistant, .cliAssistant, .jsonStructuredOutput, .researchSummarization, .toolUsingAgent:
+        case .ideCodingAssistant:
+            return intent != .general
+        case .cliAssistant:
+            return true
+        case .jsonStructuredOutput, .researchSummarization, .toolUsingAgent:
             return true
         case .generalAssistant, .longformWriting:
             return intent == .general && input.count > 420

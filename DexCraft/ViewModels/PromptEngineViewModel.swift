@@ -862,11 +862,24 @@ final class PromptEngineViewModel: ObservableObject {
 
     private func shouldUseRawBaselineForHeuristicOptimization(rawInput: String, compiledPrompt: String) -> Bool {
         guard autoOptimizePrompt else { return false }
-        guard selectedScenarioProfile == .generalAssistant || selectedScenarioProfile == .longformWriting else { return false }
 
         let trimmedRaw = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedCompiled = compiledPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRaw.isEmpty, !trimmedCompiled.isEmpty else { return false }
+
+        let intent = inferPromptIntent(from: trimmedRaw)
+        let supportsRawBaseline: Bool
+        switch selectedScenarioProfile {
+        case .generalAssistant, .longformWriting:
+            supportsRawBaseline = true
+        case .ideCodingAssistant:
+            supportsRawBaseline = intent == .general
+        case .cliAssistant:
+            supportsRawBaseline = false
+        default:
+            supportsRawBaseline = false
+        }
+        guard supportsRawBaseline else { return false }
 
         let hasExplicitStructuredSections = hasExplicitCoreHeadings(in: trimmedRaw)
 
@@ -1084,7 +1097,13 @@ final class PromptEngineViewModel: ObservableObject {
         var lines: [String]
 
         if target != .agenticIDE {
-            if selectedScenarioProfile == .ideCodingAssistant {
+            if selectedScenarioProfile == .cliAssistant {
+                lines = [
+                    "Return shell commands only unless explanation is explicitly requested.",
+                    "Commands must be copy/paste runnable and deterministic.",
+                    "Use at most one shell comment line when a note is unavoidable."
+                ]
+            } else if selectedScenarioProfile == .ideCodingAssistant {
                 lines = [
                     "Use sections in this order: Goal, Plan, Deliverables, Validation.",
                     "Plan must name concrete UI/behavior changes and affected files/components.",
@@ -1194,20 +1213,28 @@ final class PromptEngineViewModel: ObservableObject {
             return .gameDesign
         }
 
-        let softwareCueWords = [
-            "build", "implement", "refactor", "fix", "patch", "test", "code", "repository", "file", "api", "app",
-            "swift", "python", "javascript", "cli", "script", "website", "game"
+        let lookupVerbWords = ["find", "locate", "search", "list", "show", "open", "read", "summarize", "describe", "explain"]
+        let buildVerbWords = ["build", "implement", "create", "develop", "fix", "refactor", "patch", "test", "code", "program", "make", "add", "update"]
+        let strongSoftwareCueWords = [
+            "api", "function", "class", "script", "repository", "code", "swift", "python", "javascript",
+            "typescript", "react", "cli", "frontend", "backend", "module", "component", "bug", "compile", "test", "git"
         ]
-        let buildVerbWords = ["build", "implement", "create", "develop", "fix", "refactor", "patch", "test", "code", "program"]
         let technicalObjectWords = [
-            "app", "application", "game", "platformer", "website", "api", "function", "class", "script", "repository", "file",
-            "codebase", "cli", "frontend", "backend", "chess", "tic", "tac", "toe"
+            "app", "application", "game", "platformer", "website", "api", "function", "class", "script", "repository",
+            "codebase", "cli", "frontend", "backend", "chess", "tic", "tac", "toe", "minecraft", "clone"
         ]
-
-        if softwareCueWords.contains(where: tokens.contains) ||
-            (buildVerbWords.contains(where: tokens.contains) && technicalObjectWords.contains(where: tokens.contains)) ||
+        let hasLookupIntent = lookupVerbWords.contains(where: tokens.contains)
+        let mentionsFilesOnly = tokens.contains("file") || tokens.contains("files") || tokens.contains("document") || tokens.contains("documents")
+        let hasBuildVerb = buildVerbWords.contains(where: tokens.contains)
+        let hasStrongSoftwareCue = strongSoftwareCueWords.contains(where: tokens.contains) ||
             lowered.contains("codebase") ||
-            lowered.contains("source code") {
+            lowered.contains("source code")
+        if hasLookupIntent && mentionsFilesOnly && !hasBuildVerb && !hasStrongSoftwareCue {
+            return .general
+        }
+
+        if hasStrongSoftwareCue ||
+            (hasBuildVerb && technicalObjectWords.contains(where: tokens.contains)) {
             return .softwareBuild
         }
 
@@ -1240,9 +1267,9 @@ final class PromptEngineViewModel: ObservableObject {
         case .softwareBuild:
             if selectedScenarioProfile == .ideCodingAssistant {
                 return [
-                    "Define the concrete animation goals and impacted screens/components.",
+                    "Define concrete functional requirements and identify affected files/components.",
                     "Specify an ordered implementation plan with deterministic patch scope.",
-                    "Provide validation steps that confirm behavior and guard regressions."
+                    "Provide focused tests and validation steps that confirm behavior and guard regressions."
                 ]
             }
             return [

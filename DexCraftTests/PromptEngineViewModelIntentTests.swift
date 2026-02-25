@@ -121,6 +121,23 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.localizedCaseInsensitiveContains("plan with deterministic ordered steps"))
     }
 
+    func testForgePromptIDENonCodingPromptAvoidsAnimationTemplate() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .geminiChatGPT
+        viewModel.selectedScenarioProfile = .ideCodingAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Find the most useful file I've got about monkeys."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertFalse(output.contains("animation goals"))
+        XCTAssertFalse(output.contains("new animations"))
+        XCTAssertFalse(output.contains("### output contract"))
+        XCTAssertTrue(output.contains("monkeys"))
+    }
+
     private func makeViewModel() -> (PromptEngineViewModel, () -> Void) {
         let folderName = "DexCraft-IntentTests-\(UUID().uuidString)"
         let storageManager = StorageManager(appFolderName: folderName)
