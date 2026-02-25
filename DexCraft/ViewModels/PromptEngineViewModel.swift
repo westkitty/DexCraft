@@ -1754,13 +1754,13 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         let minLength = max(80, baselinePrompt.count / 4)
-        if working.count < minLength {
-            return (false, "", ["Tiny model output too short to be reliable (\(working.count) chars)."])
-        }
-
         let maxLength = max(240, Int(Double(baselinePrompt.count) * 2.2))
+        let lengthOutOfBounds = working.count < minLength || working.count > maxLength
+        if working.count < minLength {
+            notes.append("Tiny output shorter than preferred direct-accept threshold (\(working.count) chars).")
+        }
         if working.count > maxLength {
-            return (false, "", ["Tiny model output too long and likely drifted (\(working.count) chars)."])
+            notes.append("Tiny output longer than preferred direct-accept threshold (\(working.count) chars).")
         }
 
         working = dedupePromptLinesPreservingOrder(in: working)
@@ -1801,6 +1801,7 @@ final class PromptEngineViewModel: ObservableObject {
             validation.isValid &&
             !hasBoilerplateWrapper &&
             preservesHeadingStructure &&
+            !lengthOutOfBounds &&
             semanticCoverage >= minimumCoverage &&
             semanticPrecision >= minimumPrecision
         {
@@ -2045,6 +2046,11 @@ final class PromptEngineViewModel: ObservableObject {
                 lowered.contains("suggested parameters") ||
                 lowered.contains("applied rules") ||
                 lowered.contains("legacy canonical draft") ||
+                lowered.hasPrefix("i'm sorry") ||
+                lowered.hasPrefix("i’m sorry") ||
+                lowered.contains("i cannot") ||
+                lowered.contains("i can't") ||
+                lowered.contains("unable to") ||
                 lowered.contains("import ") ||
                 lowered.contains("def ") ||
                 lowered.contains("print(") ||

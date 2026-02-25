@@ -387,6 +387,83 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("fallback model unavailable"))
     }
 
+    func testTinyShortOutputCanStillApplyViaGoalRefinementFallback() throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-short-output-runtime-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/sh
+        echo "Remove all personal identifying information from the repository while preserving the username WestKitty."
+        exit 0
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: scriptURL.path)
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        setenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH", scriptURL.path, 1)
+        defer { unsetenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH") }
+
+        let tinyModelPath = makeInvalidModelFile()
+        defer { try? FileManager.default.removeItem(atPath: tinyModelPath) }
+
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = true
+        settings.useEmbeddedFallbackModel = false
+        settings.embeddedTinyModelPath = tinyModelPath
+        settings.embeddedFallbackModelPath = nil
+        viewModel.updateConnectedModelSettings(settings)
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.roughInput = "Remove all personal identifying information from the repository. The only thing that you can keep is my username, WestKitty."
+        viewModel.forgePrompt()
+
+        XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("tiny model pass applied"))
+        XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("failed validation"))
+        XCTAssertTrue(viewModel.generatedPrompt.localizedCaseInsensitiveContains("westkitty"))
+    }
+
+    func testEmbeddedRuntimePIIPromptDoesNotEndInValidationFailure() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let runtimePath = repoRoot.appendingPathComponent("Tools/embedded-tiny-runtime/macos-arm64/llama-completion").path
+        let modelPath = repoRoot.appendingPathComponent("Tools/embedded-tiny-runtime/macos-arm64/SmolLM2-135M-Instruct-Q3_K_M.gguf").path
+
+        guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
+            throw XCTSkip("Embedded runtime executable missing at \(runtimePath)")
+        }
+        guard FileManager.default.fileExists(atPath: modelPath) else {
+            throw XCTSkip("Embedded model missing at \(modelPath)")
+        }
+
+        setenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH", runtimePath, 1)
+        defer { unsetenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH") }
+
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = true
+        settings.useEmbeddedFallbackModel = true
+        settings.embeddedTinyModelPath = modelPath
+        settings.embeddedFallbackModelPath = modelPath
+        viewModel.updateConnectedModelSettings(settings)
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.roughInput = "Remove all personal identifying information from the repository. The only thing that you can keep is my username, WestKitty."
+        viewModel.forgePrompt()
+
+        XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("failed validation"))
+        XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("pass applied"))
+        XCTAssertTrue(viewModel.generatedPrompt.localizedCaseInsensitiveContains("westkitty"))
+    }
+
     private func makeInvalidModelFile() -> String {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dexcraft-invalid-model-\(UUID().uuidString).gguf")
