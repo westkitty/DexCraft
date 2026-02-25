@@ -2,9 +2,10 @@ import SwiftUI
 
 struct ResultPanelView: View {
     @ObservedObject var viewModel: PromptEngineViewModel
+    @State private var showDetails: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(viewModel.autoOptimizePrompt ? "Optimized Prompt Preview" : "Forged Prompt")
                     .font(.headline)
@@ -13,6 +14,35 @@ struct ResultPanelView: View {
                     viewModel.isResultPanelVisible = false
                 }
                 .buttonStyle(.bordered)
+            }
+
+            HStack(spacing: 8) {
+                Button("Copy to Clipboard") {
+                    viewModel.copyToClipboard()
+                }
+                .buttonStyle(.borderedProminent)
+
+                Menu("Export") {
+                    Button("Markdown (.md)") {
+                        viewModel.exportOptimizedPromptAsMarkdown()
+                    }
+
+                    if viewModel.selectedTarget == .agenticIDE {
+                        Divider()
+                        Button(viewModel.preferredIDEExportFormat.displayName) {
+                            viewModel.exportForIDE(viewModel.preferredIDEExportFormat)
+                        }
+                        Divider()
+                        Button("Export .cursorrules") {
+                            viewModel.exportForIDE(.cursorRules)
+                        }
+
+                        Button("Export copilot-instructions.md") {
+                            viewModel.exportForIDE(.copilotInstructions)
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
             }
 
             Group {
@@ -47,44 +77,33 @@ struct ResultPanelView: View {
                             .stroke(Color.white.opacity(0.18), lineWidth: 1)
                     )
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .layoutPriority(1)
 
-            HStack(spacing: 8) {
-                Button("Copy to Clipboard") {
-                    viewModel.copyToClipboard()
+            DisclosureGroup(isExpanded: $showDetails) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Show debug report", isOn: $viewModel.showDebugReport)
+                        .toggleStyle(.switch)
+                    Toggle("Show Diff View", isOn: $viewModel.showDiff)
+                        .toggleStyle(.switch)
+                    qualityGate
+                    optimizationSummary
                 }
-                .buttonStyle(.borderedProminent)
-
-                Menu("Export") {
-                    Button("Markdown (.md)") {
-                        viewModel.exportOptimizedPromptAsMarkdown()
-                    }
-
-                    if viewModel.selectedTarget == .agenticIDE {
-                        Divider()
-                        Button(viewModel.preferredIDEExportFormat.displayName) {
-                            viewModel.exportForIDE(viewModel.preferredIDEExportFormat)
-                        }
-                        Divider()
-                        Button("Export .cursorrules") {
-                            viewModel.exportForIDE(.cursorRules)
-                        }
-
-                        Button("Export copilot-instructions.md") {
-                            viewModel.exportForIDE(.copilotInstructions)
-                        }
-                    }
-                }
-                .menuStyle(.borderlessButton)
+                .padding(.top, 8)
+            } label: {
+                Text("Details")
+                    .font(.subheadline.weight(.semibold))
             }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle("Show debug report", isOn: $viewModel.showDebugReport)
-                    .toggleStyle(.switch)
-                Toggle("Show Diff View", isOn: $viewModel.showDiff)
-                    .toggleStyle(.switch)
-                qualityGate
-                optimizationSummary
-            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.20)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    )
+            )
 
             if !viewModel.statusMessage.isEmpty {
                 Text(viewModel.statusMessage)
