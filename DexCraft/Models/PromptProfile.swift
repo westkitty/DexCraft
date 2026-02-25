@@ -10,6 +10,7 @@ enum PromptFormatStyle: String, Codable {
 struct ConnectedModelSettings: Codable, Equatable {
     static let unknownUnsetLabel = "unknown/unset"
     static let defaultTinyModelIdentifier = "SmolLM2-135M-Instruct-Q3_K_M (Bundled)"
+    static let defaultFallbackModelIdentifier = "Fallback Model (Unconfigured)"
 
     // TODO: Replace defaults with exact connected model versions from Settings once known.
     var claudeModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
@@ -19,9 +20,16 @@ struct ConnectedModelSettings: Codable, Equatable {
     var useEmbeddedTinyModel: Bool?
     var embeddedTinyModelPath: String?
     var embeddedTinyModelIdentifier: String?
+    var useEmbeddedFallbackModel: Bool?
+    var embeddedFallbackModelPath: String?
+    var embeddedFallbackModelIdentifier: String?
 
     var isEmbeddedTinyModelEnabled: Bool {
         useEmbeddedTinyModel ?? false
+    }
+
+    var isEmbeddedFallbackModelEnabled: Bool {
+        useEmbeddedFallbackModel ?? true
     }
 
     var resolvedTinyModelPath: String? {
@@ -29,9 +37,19 @@ struct ConnectedModelSettings: Codable, Equatable {
         return cleaned.isEmpty ? nil : cleaned
     }
 
+    var resolvedFallbackModelPath: String? {
+        let cleaned = embeddedFallbackModelPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
     var resolvedTinyModelIdentifier: String {
         let cleaned = embeddedTinyModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return cleaned.isEmpty ? Self.defaultTinyModelIdentifier : cleaned
+    }
+
+    var resolvedFallbackModelIdentifier: String {
+        let cleaned = embeddedFallbackModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? Self.defaultFallbackModelIdentifier : cleaned
     }
 
     func modelNames(for target: PromptTarget) -> [String] {

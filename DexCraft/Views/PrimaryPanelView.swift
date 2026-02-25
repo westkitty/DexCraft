@@ -110,6 +110,21 @@ struct PrimaryPanelView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .tint(viewModel.isEmbeddedTinyModelEnabled ? .cyan : .secondary)
+
+                if viewModel.isEmbeddedTinyModelEnabled {
+                    Button {
+                        viewModel.toggleEmbeddedFallbackModelEnabled()
+                    } label: {
+                        Label(
+                            viewModel.isEmbeddedFallbackModelEnabled ? "Fallback On" : "Fallback Off",
+                            systemImage: viewModel.isEmbeddedFallbackModelEnabled ? "arrow.triangle.branch" : "arrow.triangle.branch.slash"
+                        )
+                        .font(.caption2)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(viewModel.isEmbeddedFallbackModelEnabled ? .mint : .secondary)
+                }
             }
 
             if viewModel.isEmbeddedTinyModelEnabled && !viewModel.tinyModelStatus.isEmpty {
@@ -488,6 +503,10 @@ struct PrimaryPanelView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
+            Text("Fallback: \(viewModel.isEmbeddedFallbackModelEnabled ? "Enabled" : "Disabled") (\(viewModel.embeddedFallbackModelIdentifier))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             Text("Runtime is bundled inside DexCraft. No external llama setup is required.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -514,7 +533,30 @@ struct PrimaryPanelView: View {
                 }
             }
 
-            Text("When enabled, successful tiny-model output overrides heuristic output.")
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Fallback Model (.gguf, optional but recommended)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    TextField(
+                        "/path/to/Qwen2.5-0.5B-Instruct-*.gguf",
+                        text: Binding(
+                            get: { viewModel.embeddedFallbackModelPath },
+                            set: { viewModel.updateEmbeddedFallbackModelPath($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    Button("Browse") {
+                        viewModel.browseEmbeddedFallbackModelPath()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!viewModel.isEmbeddedFallbackModelEnabled)
+                }
+            }
+
+            Text("Routing: tiny model runs first; fallback model runs only when tiny output is invalid/unavailable.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 

@@ -215,8 +215,14 @@ final class PromptEngineViewModel: ObservableObject {
         if connectedModelSettings.useEmbeddedTinyModel == nil {
             connectedModelSettings.useEmbeddedTinyModel = true
         }
+        if connectedModelSettings.useEmbeddedFallbackModel == nil {
+            connectedModelSettings.useEmbeddedFallbackModel = true
+        }
         if (connectedModelSettings.embeddedTinyModelIdentifier ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             connectedModelSettings.embeddedTinyModelIdentifier = ConnectedModelSettings.defaultTinyModelIdentifier
+        }
+        if (connectedModelSettings.embeddedFallbackModelIdentifier ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            connectedModelSettings.embeddedFallbackModelIdentifier = ConnectedModelSettings.defaultFallbackModelIdentifier
         }
         if connectedModelSettings.isEmbeddedTinyModelEnabled {
             selectedModelFamily = .localCLIRuntimes
@@ -265,6 +271,18 @@ final class PromptEngineViewModel: ObservableObject {
         connectedModelSettings.resolvedTinyModelIdentifier
     }
 
+    var isEmbeddedFallbackModelEnabled: Bool {
+        connectedModelSettings.isEmbeddedFallbackModelEnabled
+    }
+
+    var embeddedFallbackModelPath: String {
+        connectedModelSettings.resolvedFallbackModelPath ?? ""
+    }
+
+    var embeddedFallbackModelIdentifier: String {
+        connectedModelSettings.resolvedFallbackModelIdentifier
+    }
+
     func setEmbeddedTinyModelEnabled(_ enabled: Bool) {
         var updated = connectedModelSettings
         updated.useEmbeddedTinyModel = enabled
@@ -304,6 +322,47 @@ final class PromptEngineViewModel: ObservableObject {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         updateEmbeddedTinyModelPath(url.path)
+    }
+
+    func setEmbeddedFallbackModelEnabled(_ enabled: Bool) {
+        var updated = connectedModelSettings
+        updated.useEmbeddedFallbackModel = enabled
+        if enabled && (updated.embeddedFallbackModelIdentifier ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updated.embeddedFallbackModelIdentifier = ConnectedModelSettings.defaultFallbackModelIdentifier
+        }
+        updateConnectedModelSettings(updated)
+    }
+
+    func toggleEmbeddedFallbackModelEnabled() {
+        setEmbeddedFallbackModelEnabled(!isEmbeddedFallbackModelEnabled)
+    }
+
+    func updateEmbeddedFallbackModelPath(_ path: String) {
+        var updated = connectedModelSettings
+        updated.embeddedFallbackModelPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if updated.resolvedFallbackModelPath != nil,
+           (updated.embeddedFallbackModelIdentifier ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updated.embeddedFallbackModelIdentifier = "Fallback .gguf (Custom)"
+        }
+        updateConnectedModelSettings(updated)
+    }
+
+    func browseEmbeddedFallbackModelPath() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Fallback GGUF Model"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if #available(macOS 11.0, *) {
+            if let ggufType = UTType(filenameExtension: "gguf") {
+                panel.allowedContentTypes = [ggufType]
+            }
+        } else {
+            panel.allowedFileTypes = ["gguf"]
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        updateEmbeddedFallbackModelPath(url.path)
     }
 
     var qualityChecks: [QualityCheck] {
@@ -535,45 +594,43 @@ final class PromptEngineViewModel: ObservableObject {
                 scenario: selectedScenarioProfile,
                 maxTokens: tokensHint
             )
+            let tinyAttempt = attemptEmbeddedTierRewrite(
+                tier: .tinyPrimary,
+                request: request,
+                baselinePrompt: selectedFinalPrompt,
+                ir: selectedIR,
+                options: options
+            )
+            fallbackNotes.append(contentsOf: tinyAttempt.notes)
 
-            do {
-                let tinyResult = try embeddedTinyLLMService.rewrite(
-                    request: request,
-                    settings: connectedModelSettings
+            if let acceptedOutput = tinyAttempt.acceptedOutput {
+                selectedFinalPrompt = acceptedOutput
+                tinyModelStatus = tinyAttempt.status
+            } else if connectedModelSettings.isEmbeddedFallbackModelEnabled {
+                fallbackNotes.append("Attempting fallback local model pass.")
+                let fallbackRequest = EmbeddedTinyModelRequest(
+                    prompt: selectedFinalPrompt,
+                    scenario: selectedScenarioProfile,
+                    maxTokens: max(256, tokensHint)
                 )
-                let tinyOutput = tinyResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !tinyOutput.isEmpty {
-                    let tinyEvaluation = evaluateTinyModelCandidate(
-                        candidate: tinyOutput,
-                        baselinePrompt: selectedFinalPrompt,
-                        ir: selectedIR,
-                        options: options
-                    )
-                    if tinyEvaluation.accepted {
-                        selectedFinalPrompt = tinyEvaluation.sanitizedOutput
-                        tinyModelStatus = "Tiny model pass applied (\(tinyResult.durationMs)ms)"
-                        fallbackNotes.append("Embedded tiny model selected output (\(tinyResult.durationMs)ms).")
-                        fallbackNotes.append("Tiny runtime: \(tinyResult.runtimePath)")
-                        if !tinyEvaluation.notes.isEmpty {
-                            fallbackNotes.append(contentsOf: tinyEvaluation.notes.map { "Tiny note: \($0)" })
-                        }
-                    } else {
-                        tinyModelStatus = "Tiny model output failed validation. Kept heuristic result."
-                        fallbackNotes.append("Tiny model output failed validation; heuristic result kept.")
-                        if !tinyEvaluation.notes.isEmpty {
-                            fallbackNotes.append("Tiny validation errors: \(tinyEvaluation.notes.joined(separator: " | "))")
-                        }
-                        statusMessage = tinyModelStatus
-                    }
+                let fallbackAttempt = attemptEmbeddedTierRewrite(
+                    tier: .fallbackSecondary,
+                    request: fallbackRequest,
+                    baselinePrompt: selectedFinalPrompt,
+                    ir: selectedIR,
+                    options: options
+                )
+                fallbackNotes.append(contentsOf: fallbackAttempt.notes)
+
+                if let acceptedOutput = fallbackAttempt.acceptedOutput {
+                    selectedFinalPrompt = acceptedOutput
+                    tinyModelStatus = fallbackAttempt.status
                 } else {
-                    tinyModelStatus = "Tiny model returned empty output. Kept heuristic result."
-                    fallbackNotes.append("Tiny model returned empty output; heuristic result kept.")
+                    tinyModelStatus = fallbackAttempt.status
                     statusMessage = tinyModelStatus
                 }
-            } catch {
-                tinyModelStatus = "Tiny model unavailable: \(error.localizedDescription)"
-                fallbackNotes.append("Tiny model unavailable; heuristic result kept.")
-                fallbackNotes.append("Tiny model error: \(error.localizedDescription)")
+            } else {
+                tinyModelStatus = tinyAttempt.status
                 statusMessage = tinyModelStatus
             }
         } else {
@@ -602,9 +659,13 @@ final class PromptEngineViewModel: ObservableObject {
                 optimizationWarnings = output.warnings
             }
             if !tinyModelStatus.isEmpty {
-                optimizationAppliedRules.insert("Embedded tiny model rewrite enabled (\(embeddedTinyModelIdentifier)).", at: 0)
+                optimizationAppliedRules.insert(
+                    "Embedded local rewrite routing enabled (tiny: \(embeddedTinyModelIdentifier), fallback: \(isEmbeddedFallbackModelEnabled ? embeddedFallbackModelIdentifier : "disabled")).",
+                    at: 0
+                )
                 if tinyModelStatus.localizedCaseInsensitiveContains("unavailable") ||
-                    tinyModelStatus.localizedCaseInsensitiveContains("empty") {
+                    tinyModelStatus.localizedCaseInsensitiveContains("empty") ||
+                    tinyModelStatus.localizedCaseInsensitiveContains("failed") {
                     optimizationWarnings.append(tinyModelStatus)
                 } else {
                     optimizationAppliedRules.insert(tinyModelStatus, at: 1)
@@ -1584,6 +1645,79 @@ final class PromptEngineViewModel: ObservableObject {
             warnings: warnings,
             metrics: metrics
         )
+    }
+
+    private struct EmbeddedTierAttemptResult {
+        let acceptedOutput: String?
+        let status: String
+        let notes: [String]
+    }
+
+    private func attemptEmbeddedTierRewrite(
+        tier: EmbeddedLocalModelTier,
+        request: EmbeddedTinyModelRequest,
+        baselinePrompt: String,
+        ir: PromptIR,
+        options: EnhancementOptions
+    ) -> EmbeddedTierAttemptResult {
+        let prefix = tier.statusPrefix
+
+        do {
+            let result = try embeddedTinyLLMService.rewrite(
+                request: request,
+                settings: connectedModelSettings,
+                tier: tier
+            )
+            let modelOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if modelOutput.isEmpty {
+                return EmbeddedTierAttemptResult(
+                    acceptedOutput: nil,
+                    status: "\(prefix) returned empty output. Kept heuristic result.",
+                    notes: ["\(prefix) returned empty output; heuristic result kept."]
+                )
+            }
+
+            let evaluation = evaluateTinyModelCandidate(
+                candidate: modelOutput,
+                baselinePrompt: baselinePrompt,
+                ir: ir,
+                options: options
+            )
+            if evaluation.accepted {
+                var notes = [
+                    "\(prefix) selected output (\(result.durationMs)ms).",
+                    "\(prefix) runtime: \(result.runtimePath)",
+                    "\(prefix) model: \(result.modelPath)"
+                ]
+                if !evaluation.notes.isEmpty {
+                    notes.append(contentsOf: evaluation.notes.map { "\(prefix) note: \($0)" })
+                }
+                return EmbeddedTierAttemptResult(
+                    acceptedOutput: evaluation.sanitizedOutput,
+                    status: "\(prefix) pass applied (\(result.durationMs)ms)",
+                    notes: notes
+                )
+            }
+
+            var notes = ["\(prefix) output failed validation; heuristic result kept."]
+            if !evaluation.notes.isEmpty {
+                notes.append("\(prefix) validation errors: \(evaluation.notes.joined(separator: " | "))")
+            }
+            return EmbeddedTierAttemptResult(
+                acceptedOutput: nil,
+                status: "\(prefix) output failed validation. Kept heuristic result.",
+                notes: notes
+            )
+        } catch {
+            return EmbeddedTierAttemptResult(
+                acceptedOutput: nil,
+                status: "\(prefix) unavailable: \(error.localizedDescription)",
+                notes: [
+                    "\(prefix) unavailable; heuristic result kept.",
+                    "\(prefix) error: \(error.localizedDescription)"
+                ]
+            )
+        }
     }
 
     private func evaluateTinyModelCandidate(

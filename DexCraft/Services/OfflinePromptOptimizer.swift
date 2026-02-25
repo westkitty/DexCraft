@@ -325,33 +325,52 @@ struct EmbeddedTinyModelRequest {
     let maxTokens: Int
 }
 
+enum EmbeddedLocalModelTier: String {
+    case tinyPrimary
+    case fallbackSecondary
+
+    var statusPrefix: String {
+        switch self {
+        case .tinyPrimary:
+            return "Tiny model"
+        case .fallbackSecondary:
+            return "Fallback model"
+        }
+    }
+}
+
 struct EmbeddedTinyModelResult {
     let output: String
     let durationMs: Int
     let runtimePath: String
+    let modelPath: String
+    let tier: EmbeddedLocalModelTier
 }
 
 enum EmbeddedTinyModelError: LocalizedError {
     case runtimeNotFound
-    case modelNotFound
-    case processFailed(exitCode: Int32, detail: String)
-    case invalidOutput
+    case tinyModelNotFound
+    case fallbackModelNotFound
+    case processFailed(tier: EmbeddedLocalModelTier, exitCode: Int32, detail: String)
+    case invalidOutput(tier: EmbeddedLocalModelTier)
 
     var errorDescription: String? {
         switch self {
         case .runtimeNotFound:
             return "Embedded tiny runtime is missing from DexCraft. Reinstall the app to restore bundled runtime files."
-        case .modelNotFound:
+        case .tinyModelNotFound:
             return "Bundled tiny model is missing. Reinstall DexCraft or choose a local .gguf model override in Settings."
-        case .processFailed(let exitCode, let detail):
+        case .fallbackModelNotFound:
+            return "Fallback model is not configured. Add a fallback .gguf path in Settings."
+        case .processFailed(let tier, let exitCode, let detail):
             let cleanedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
             let condensedDetail = String(cleanedDetail.prefix(320))
             if condensedDetail.isEmpty {
-                return "Tiny model process failed with exit code \(exitCode)."
+                return "\(tier.statusPrefix) process failed with exit code \(exitCode)."
             }
-            return "Tiny model process failed with exit code \(exitCode): \(condensedDetail)"
-        case .invalidOutput:
-            return "Tiny model produced empty/invalid output."
+            return "\(tier.statusPrefix) process failed with exit code \(exitCode): \(condensedDetail)"
+        case .invalidOutput(let tier):
+            return "\(tier.statusPrefix) produced empty/invalid output."
         }
     }
 }
@@ -361,11 +380,12 @@ final class EmbeddedTinyLLMService {
 
     func rewrite(
         request: EmbeddedTinyModelRequest,
-        settings: ConnectedModelSettings
+        settings: ConnectedModelSettings,
+        tier: EmbeddedLocalModelTier = .tinyPrimary
     ) throws -> EmbeddedTinyModelResult {
         let runtimePath = try resolveRuntimePath()
         let runtimeDirectoryPath = (runtimePath as NSString).deletingLastPathComponent
-        let modelPath = try resolveModelPath(from: settings)
+        let modelPath = try resolveModelPath(from: settings, tier: tier)
         let startedAt = Date()
 
         let process = Process()
@@ -373,7 +393,8 @@ final class EmbeddedTinyLLMService {
         process.currentDirectoryURL = URL(fileURLWithPath: runtimeDirectoryPath)
         process.arguments = buildArguments(
             request: request,
-            modelPath: modelPath
+            modelPath: modelPath,
+            tier: tier
         )
         var environment = ProcessInfo.processInfo.environment
         let existingDyldPath = environment["DYLD_LIBRARY_PATH"] ?? ""
@@ -411,52 +432,93 @@ final class EmbeddedTinyLLMService {
 
         guard process.terminationStatus == 0 else {
             throw EmbeddedTinyModelError.processFailed(
+                tier: tier,
                 exitCode: process.terminationStatus,
                 detail: stderrOutput
             )
         }
 
         guard !output.isEmpty else {
-            throw EmbeddedTinyModelError.invalidOutput
+            throw EmbeddedTinyModelError.invalidOutput(tier: tier)
         }
 
         let cleaned = extractMarkedOutput(from: output)
         guard !cleaned.isEmpty else {
-            throw EmbeddedTinyModelError.invalidOutput
+            throw EmbeddedTinyModelError.invalidOutput(tier: tier)
         }
 
         let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000.0)
         return EmbeddedTinyModelResult(
             output: cleaned,
             durationMs: durationMs,
-            runtimePath: runtimePath
+            runtimePath: runtimePath,
+            modelPath: modelPath,
+            tier: tier
         )
     }
 
     private func buildArguments(
         request: EmbeddedTinyModelRequest,
-        modelPath: String
+        modelPath: String,
+        tier: EmbeddedLocalModelTier
     ) -> [String] {
         let systemPrompt = renderSystemPrompt()
         let prompt = renderPrompt(request: request)
+        let generation = generationConfig(for: tier, requestedMaxTokens: request.maxTokens)
         return [
             "-m", modelPath,
             "--conversation",
             "--single-turn",
             "--no-warmup",
-            "--threads", "4",
+            "--threads", String(generation.threads),
             "--seed", "7",
             "--system-prompt", systemPrompt,
             "-p", prompt,
-            "-n", String(max(96, min(320, request.maxTokens))),
-            "--temp", "0.2",
-            "--top-p", "0.9",
-            "--top-k", "40",
-            "--repeat-penalty", "1.05",
-            "--ctx-size", "2048",
+            "-n", String(generation.maxTokens),
+            "--temp", String(format: "%.2f", generation.temperature),
+            "--top-p", String(format: "%.2f", generation.topP),
+            "--top-k", String(generation.topK),
+            "--repeat-penalty", String(format: "%.2f", generation.repeatPenalty),
+            "--ctx-size", String(generation.ctxSize),
             "--simple-io",
             "--no-display-prompt"
         ]
+    }
+
+    private func generationConfig(
+        for tier: EmbeddedLocalModelTier,
+        requestedMaxTokens: Int
+    ) -> (
+        threads: Int,
+        maxTokens: Int,
+        temperature: Double,
+        topP: Double,
+        topK: Int,
+        repeatPenalty: Double,
+        ctxSize: Int
+    ) {
+        switch tier {
+        case .tinyPrimary:
+            return (
+                threads: 4,
+                maxTokens: max(96, min(320, requestedMaxTokens)),
+                temperature: 0.20,
+                topP: 0.90,
+                topK: 40,
+                repeatPenalty: 1.05,
+                ctxSize: 2048
+            )
+        case .fallbackSecondary:
+            return (
+                threads: 4,
+                maxTokens: max(128, min(480, requestedMaxTokens)),
+                temperature: 0.15,
+                topP: 0.88,
+                topK: 36,
+                repeatPenalty: 1.08,
+                ctxSize: 3072
+            )
+        }
     }
 
     private func renderSystemPrompt() -> String {
@@ -585,6 +647,15 @@ final class EmbeddedTinyLLMService {
     }
 
     private func resolveRuntimePath() throws -> String {
+        let environment = ProcessInfo.processInfo.environment
+        if
+            let overridePath = environment["DEXCRAFT_EMBEDDED_RUNTIME_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !overridePath.isEmpty,
+            fileManager.isExecutableFile(atPath: overridePath)
+        {
+            return overridePath
+        }
+
         guard
             let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
         else {
@@ -599,26 +670,73 @@ final class EmbeddedTinyLLMService {
         return runtimeExecutable
     }
 
-    private func resolveModelPath(from settings: ConnectedModelSettings) throws -> String {
-        if let explicit = settings.resolvedTinyModelPath, fileManager.fileExists(atPath: explicit) {
-            return explicit
-        }
+    private func resolveModelPath(
+        from settings: ConnectedModelSettings,
+        tier: EmbeddedLocalModelTier
+    ) throws -> String {
+        let environment = ProcessInfo.processInfo.environment
+        switch tier {
+        case .tinyPrimary:
+            if let explicit = settings.resolvedTinyModelPath, fileManager.fileExists(atPath: explicit) {
+                return explicit
+            }
 
-        if
-            let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
-        {
-            let bundledCandidates = [
-                "SmolLM2-135M-Instruct-Q3_K_M.gguf",
-                "SmolLM2-135M-Instruct-Q4_K_M.gguf"
-            ]
-            for filename in bundledCandidates {
-                let bundledModelPath = runtimeDirectory.appendingPathComponent(filename).path
-                if fileManager.fileExists(atPath: bundledModelPath) {
-                    return bundledModelPath
+            if
+                let envPath = environment["DEXCRAFT_EMBEDDED_TINY_MODEL_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !envPath.isEmpty,
+                fileManager.fileExists(atPath: envPath)
+            {
+                return envPath
+            }
+
+            if
+                let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
+            {
+                let bundledCandidates = [
+                    "SmolLM2-135M-Instruct-Q3_K_M.gguf",
+                    "SmolLM2-135M-Instruct-Q4_K_M.gguf"
+                ]
+                for filename in bundledCandidates {
+                    let bundledModelPath = runtimeDirectory.appendingPathComponent(filename).path
+                    if fileManager.fileExists(atPath: bundledModelPath) {
+                        return bundledModelPath
+                    }
                 }
             }
-        }
 
-        throw EmbeddedTinyModelError.modelNotFound
+            throw EmbeddedTinyModelError.tinyModelNotFound
+
+        case .fallbackSecondary:
+            if let explicit = settings.resolvedFallbackModelPath, fileManager.fileExists(atPath: explicit) {
+                return explicit
+            }
+
+            if
+                let envPath = environment["DEXCRAFT_EMBEDDED_FALLBACK_MODEL_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !envPath.isEmpty,
+                fileManager.fileExists(atPath: envPath)
+            {
+                return envPath
+            }
+
+            if
+                let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
+            {
+                let bundledCandidates = [
+                    "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+                    "SmolLM2-360M-Instruct-Q3_K_M.gguf",
+                    "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
+                    "Qwen2.5-0.5B-Instruct-Q3_K_M.gguf"
+                ]
+                for filename in bundledCandidates {
+                    let bundledModelPath = runtimeDirectory.appendingPathComponent(filename).path
+                    if fileManager.fileExists(atPath: bundledModelPath) {
+                        return bundledModelPath
+                    }
+                }
+            }
+
+            throw EmbeddedTinyModelError.fallbackModelNotFound
+        }
     }
 }

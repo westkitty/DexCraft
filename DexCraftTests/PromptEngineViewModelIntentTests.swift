@@ -240,6 +240,98 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertTrue(output.contains("monkeys"))
     }
 
+    func testEmbeddedRoutingRunsFallbackAcrossFiftyPrompts() throws {
+        let sweepFlagPath = "/tmp/dexcraft-embedded-sweep.flag"
+        guard FileManager.default.fileExists(atPath: sweepFlagPath) else {
+            throw XCTSkip("Create \(sweepFlagPath) to run the 50-prompt embedded routing sweep.")
+        }
+
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let runtimePath = repoRoot.appendingPathComponent("Tools/embedded-tiny-runtime/macos-arm64/llama-completion").path
+        let modelPath = repoRoot.appendingPathComponent("Tools/embedded-tiny-runtime/macos-arm64/SmolLM2-135M-Instruct-Q3_K_M.gguf").path
+
+        guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
+            throw XCTSkip("Embedded runtime executable missing at \(runtimePath)")
+        }
+        guard FileManager.default.fileExists(atPath: modelPath) else {
+            throw XCTSkip("Embedded model missing at \(modelPath)")
+        }
+
+        setenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH", runtimePath, 1)
+        defer { unsetenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH") }
+
+        let invalidTinyModelPath = makeInvalidModelFile()
+        defer { try? FileManager.default.removeItem(atPath: invalidTinyModelPath) }
+
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = true
+        settings.useEmbeddedFallbackModel = true
+        settings.embeddedTinyModelPath = invalidTinyModelPath
+        settings.embeddedTinyModelIdentifier = "Invalid Tiny (Test)"
+        settings.embeddedFallbackModelPath = modelPath
+        settings.embeddedFallbackModelIdentifier = "Fallback Test Model"
+        viewModel.updateConnectedModelSettings(settings)
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+
+        let actions = [
+            "Design a concise plan to",
+            "Create a practical checklist to",
+            "Write a concrete prompt to",
+            "Draft testable requirements to",
+            "Produce deterministic steps to"
+        ]
+        let topics = [
+            "build a dog walking app",
+            "organize a photo backup workflow",
+            "create a local note-taking tool",
+            "plan a weekly meal prep schedule",
+            "improve a personal budget tracker",
+            "set up a home lab backup policy",
+            "prepare a small game prototype",
+            "document an API migration path",
+            "audit a local security checklist",
+            "define acceptance criteria for a UI refresh"
+        ]
+
+        var prompts: [String] = []
+        for action in actions {
+            for topic in topics {
+                prompts.append("\(action) \(topic).")
+            }
+        }
+        XCTAssertEqual(prompts.count, 50)
+
+        var fallbackStatusCount = 0
+        for prompt in prompts {
+            viewModel.roughInput = prompt
+            viewModel.forgePrompt()
+
+            let generated = viewModel.generatedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            XCTAssertFalse(generated.isEmpty, "Generated prompt should not be empty for input: \(prompt)")
+            XCTAssertFalse(generated.lowercased().contains("here's a rewritten prompt"), "Wrapper text leaked for: \(prompt)")
+            XCTAssertTrue(viewModel.tinyModelStatus.contains("Fallback model"), "Fallback tier did not run for: \(prompt)")
+            fallbackStatusCount += 1
+        }
+
+        XCTAssertEqual(fallbackStatusCount, 50)
+    }
+
+    private func makeInvalidModelFile() -> String {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-invalid-model-\(UUID().uuidString).gguf")
+        let contents = Data("this-is-not-a-valid-gguf".utf8)
+        try? contents.write(to: url, options: .atomic)
+        return url.path
+    }
+
     private func makeViewModel() -> (PromptEngineViewModel, () -> Void) {
         let folderName = "DexCraft-IntentTests-\(UUID().uuidString)"
         let storageManager = StorageManager(appFolderName: folderName)
