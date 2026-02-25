@@ -93,9 +93,24 @@ struct PrimaryPanelView: View {
 
     private var selectorSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle("Auto-optimize prompt", isOn: $viewModel.autoOptimizePrompt)
-                .toggleStyle(.switch)
-                .font(.caption)
+            HStack(spacing: 10) {
+                Toggle("Auto-optimize prompt", isOn: $viewModel.autoOptimizePrompt)
+                    .toggleStyle(.switch)
+                    .font(.caption)
+
+                Button {
+                    viewModel.toggleEmbeddedTinyModelEnabled()
+                } label: {
+                    Label(
+                        viewModel.isEmbeddedTinyModelEnabled ? "Tiny LLM On" : "Tiny LLM Off",
+                        systemImage: viewModel.isEmbeddedTinyModelEnabled ? "sparkles" : "sparkles.slash"
+                    )
+                    .font(.caption2)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(viewModel.isEmbeddedTinyModelEnabled ? .cyan : .secondary)
+            }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Target Environment")
@@ -460,15 +475,9 @@ struct PrimaryPanelView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Toggle(
-                "Use embedded tiny model for final rewrite (\(viewModel.embeddedTinyModelIdentifier))",
-                isOn: Binding(
-                    get: { viewModel.isEmbeddedTinyModelEnabled },
-                    set: { viewModel.setEmbeddedTinyModelEnabled($0) }
-                )
-            )
-            .toggleStyle(.switch)
-            .font(.caption2)
+            Text("Status: \(viewModel.isEmbeddedTinyModelEnabled ? "Enabled" : "Disabled") (\(viewModel.embeddedTinyModelIdentifier))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Tiny Model (.gguf)")

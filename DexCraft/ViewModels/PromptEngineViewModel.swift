@@ -274,6 +274,10 @@ final class PromptEngineViewModel: ObservableObject {
         updateConnectedModelSettings(updated)
     }
 
+    func toggleEmbeddedTinyModelEnabled() {
+        setEmbeddedTinyModelEnabled(!isEmbeddedTinyModelEnabled)
+    }
+
     func updateEmbeddedTinyModelPath(_ path: String) {
         var updated = connectedModelSettings
         updated.embeddedTinyModelPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -531,10 +535,23 @@ final class PromptEngineViewModel: ObservableObject {
                 )
                 let tinyOutput = tinyResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !tinyOutput.isEmpty {
-                    selectedFinalPrompt = tinyOutput
-                    tinyModelStatus = "Tiny model pass applied (\(tinyResult.durationMs)ms)"
-                    fallbackNotes.append("Embedded tiny model selected output (\(tinyResult.durationMs)ms).")
-                    fallbackNotes.append("Tiny runtime: \(tinyResult.runtimePath)")
+                    let tinyValidation = validate(
+                        finalPrompt: tinyOutput,
+                        ir: selectedIR,
+                        options: options
+                    )
+                    if tinyValidation.isValid {
+                        selectedFinalPrompt = tinyOutput
+                        tinyModelStatus = "Tiny model pass applied (\(tinyResult.durationMs)ms)"
+                        fallbackNotes.append("Embedded tiny model selected output (\(tinyResult.durationMs)ms).")
+                        fallbackNotes.append("Tiny runtime: \(tinyResult.runtimePath)")
+                    } else {
+                        tinyModelStatus = "Tiny model output failed validation. Kept heuristic result."
+                        fallbackNotes.append("Tiny model output failed validation; heuristic result kept.")
+                        if !tinyValidation.errors.isEmpty {
+                            fallbackNotes.append("Tiny validation errors: \(tinyValidation.errors.joined(separator: " | "))")
+                        }
+                    }
                 } else {
                     tinyModelStatus = "Tiny model returned empty output. Kept heuristic result."
                     fallbackNotes.append("Tiny model returned empty output; heuristic result kept.")
@@ -904,13 +921,6 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     var userVisiblePrompt: String {
-        if showDebugReport {
-            let trimmedDebugReport = debugReport.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedDebugReport.isEmpty {
-                return trimmedDebugReport
-            }
-            return generatedPrompt
-        }
         if !finalPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return finalPrompt
         }
@@ -1486,6 +1496,7 @@ final class PromptEngineViewModel: ObservableObject {
             "### Suggested Parameters",
             "### Applied Rules",
             "### Warnings",
+            "### Canonical Draft (Reference)",
             "### Legacy Canonical Draft"
         ]
         let leakedMarkers = scaffoldMarkers.filter(finalPrompt.contains)
@@ -2530,7 +2541,7 @@ final class PromptEngineViewModel: ObservableObject {
         sections.append("### Warnings")
         sections.append(output.warnings.isEmpty ? "- None" : bulletize(output.warnings))
         sections.append("")
-        sections.append("### Legacy Canonical Draft")
+        sections.append("### Canonical Draft (Reference)")
         sections.append(basePrompt)
 
         return sections.joined(separator: "\n")
@@ -2538,11 +2549,15 @@ final class PromptEngineViewModel: ObservableObject {
 
     private func extractUserFacingPrompt(from fullText: String) -> String {
         let optimizedHeading = "### Optimized Prompt"
-        let legacyHeading = "### Legacy Canonical Draft"
+        let canonicalReferenceHeadings = [
+            "### Canonical Draft (Reference)",
+            "### Legacy Canonical Draft"
+        ]
         let stopHeadings = [
             "### Suggested Parameters",
             "### Applied Rules",
             "### Warnings",
+            "### Canonical Draft (Reference)",
             "### Legacy Canonical Draft"
         ]
 
@@ -2560,8 +2575,12 @@ final class PromptEngineViewModel: ObservableObject {
             return String(fullText[contentStart..<contentEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        if !fullText.contains(optimizedHeading), let legacyHeadingRange = fullText.range(of: legacyHeading) {
-            return String(fullText[legacyHeadingRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fullText.contains(optimizedHeading) {
+            for heading in canonicalReferenceHeadings {
+                if let headingRange = fullText.range(of: heading) {
+                    return String(fullText[headingRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
         }
 
         return fullText.trimmingCharacters(in: .whitespacesAndNewlines)

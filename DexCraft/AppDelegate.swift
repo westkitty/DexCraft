@@ -47,7 +47,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popover.contentSize = collapsedSize
 
         let rootView = RootPopoverView(viewModel: viewModel)
-            .preferredColorScheme(.dark)
         popover.contentViewController = NSHostingController(rootView: rootView)
     }
 
@@ -237,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.delegate = self
         panel.isReleasedWhenClosed = false
         panel.contentViewController = NSHostingController(
-            rootView: RootPopoverView(viewModel: viewModel).preferredColorScheme(.dark)
+            rootView: RootPopoverView(viewModel: viewModel)
         )
         panel.center()
         panel.makeKeyAndOrderFront(nil)
