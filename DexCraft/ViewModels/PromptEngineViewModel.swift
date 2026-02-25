@@ -489,7 +489,28 @@ final class PromptEngineViewModel: ObservableObject {
             let result = HeuristicPromptOptimizer.optimize(baselinePrompt, context: context)
             heuristicResult = result
             let trimmedOptimized = result.optimizedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            selectedFinalPrompt = trimmedOptimized.isEmpty ? baselinePrompt : trimmedOptimized
+            if trimmedOptimized.isEmpty {
+                selectedFinalPrompt = baselinePrompt
+            } else {
+                let taskIntent = inferPromptIntent(from: selectedIR.goalOrTask)
+                let enforceAlignment = taskIntent == .softwareBuild || taskIntent == .gameDesign
+                let coverage = semanticAnchorCoverage(
+                    candidate: trimmedOptimized,
+                    baselineTask: selectedIR.goalOrTask
+                )
+
+                if enforceAlignment && coverage < 0.30 {
+                    selectedFinalPrompt = baselinePrompt
+                    fallbackNotes.append(
+                        String(
+                            format: "Heuristic candidate rejected for low task alignment (coverage %.2f); baseline retained.",
+                            coverage
+                        )
+                    )
+                } else {
+                    selectedFinalPrompt = trimmedOptimized
+                }
+            }
             fallbackNotes.append("Heuristic optimizer selected: \(result.selectedCandidateTitle) (score \(result.score)).")
             if let tuned = result.tunedWeights {
                 learnedHeuristicWeights = tuned
@@ -1002,7 +1023,7 @@ final class PromptEngineViewModel: ObservableObject {
         let supportsRawBaseline: Bool
         switch selectedScenarioProfile {
         case .generalAssistant, .longformWriting:
-            supportsRawBaseline = true
+            supportsRawBaseline = intent != .softwareBuild
         case .ideCodingAssistant:
             supportsRawBaseline = intent == .general
         case .cliAssistant:

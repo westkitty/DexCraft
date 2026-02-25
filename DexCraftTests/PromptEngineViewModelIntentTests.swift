@@ -57,6 +57,22 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
     }
 
+    func testForgePromptSoftwareBuildRetainsConcreteTaskAnchors() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Make me a snake game, set in the 1700s."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("snake"))
+        XCTAssertTrue(output.contains("1700"))
+        XCTAssertFalse(output.contains("translate the request into concrete functional requirements"))
+    }
+
     func testForgePromptGeneralListUsesSemanticRewriteInsteadOfGenericContract() {
         let (viewModel, cleanup) = makeViewModel()
         defer { cleanup() }
