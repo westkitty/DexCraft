@@ -35,6 +35,11 @@ if [[ -d "$EMBEDDED_RUNTIME_SOURCE" ]]; then
   mkdir -p "$EMBEDDED_RUNTIME_DESTINATION"
   ditto "$EMBEDDED_RUNTIME_SOURCE" "$EMBEDDED_RUNTIME_DESTINATION"
   chmod +x "$EMBEDDED_RUNTIME_DESTINATION/llama-completion" || true
+  if command -v codesign >/dev/null 2>&1; then
+    find "$EMBEDDED_RUNTIME_DESTINATION" -type f \( -name "*.dylib" -o -name "llama-completion" \) -print0 | while IFS= read -r -d '' file; do
+      codesign --force --sign - "$file" >/dev/null 2>&1 || true
+    done
+  fi
 else
   echo "Warning: Embedded tiny runtime source not found at $EMBEDDED_RUNTIME_SOURCE" >&2
 fi

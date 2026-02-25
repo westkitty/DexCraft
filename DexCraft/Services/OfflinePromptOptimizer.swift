@@ -345,10 +345,11 @@ enum EmbeddedTinyModelError: LocalizedError {
             return "Bundled tiny model is missing. Reinstall DexCraft or choose a local .gguf model override in Settings."
         case .processFailed(let exitCode, let detail):
             let cleanedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleanedDetail.isEmpty {
+            let condensedDetail = String(cleanedDetail.prefix(320))
+            if condensedDetail.isEmpty {
                 return "Tiny model process failed with exit code \(exitCode)."
             }
-            return "Tiny model process failed with exit code \(exitCode): \(cleanedDetail)"
+            return "Tiny model process failed with exit code \(exitCode): \(condensedDetail)"
         case .invalidOutput:
             return "Tiny model produced empty/invalid output."
         }
@@ -444,12 +445,14 @@ final class EmbeddedTinyLLMService {
             "--single-turn",
             "--no-warmup",
             "--threads", "4",
+            "--seed", "7",
             "--system-prompt", systemPrompt,
             "-p", prompt,
             "-n", String(max(96, min(320, request.maxTokens))),
             "--temp", "0.2",
             "--top-p", "0.9",
             "--top-k", "40",
+            "--repeat-penalty", "1.05",
             "--ctx-size", "2048",
             "--simple-io",
             "--no-display-prompt"
@@ -458,9 +461,9 @@ final class EmbeddedTinyLLMService {
 
     private func renderSystemPrompt() -> String {
         """
-        You rewrite user prompts for execution quality.
-        Return exactly one rewritten prompt.
-        Do not output prefaces, analysis, bullet labels, or multiple alternatives.
+        Rewrite user prompts for execution quality.
+        Keep constraints and deliverables intact.
+        Return only one rewritten prompt.
         """
     }
 
@@ -472,7 +475,6 @@ final class EmbeddedTinyLLMService {
         Keep headings and section order unchanged when headings exist.
         Do not add or remove sections.
         Return only the rewritten prompt text with no labels or explanations.
-        Forbidden headings: ### Model Family, ### Suggested Parameters, ### Applied Rules, ### Warnings, ### Canonical Draft (Reference), ### Legacy Canonical Draft.
 
         \(request.prompt)
         """

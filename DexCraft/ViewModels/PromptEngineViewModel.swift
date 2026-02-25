@@ -1613,6 +1613,19 @@ final class PromptEngineViewModel: ObservableObject {
             }
         }
 
+        if
+            let hintFallback = synthesizeTinyHintRefinement(
+                candidate: working,
+                baselinePrompt: baselinePrompt
+            )
+        {
+            let hintValidation = validate(finalPrompt: hintFallback, ir: ir, options: options)
+            if hintValidation.isValid {
+                notes.append("Applied tiny hint refinement in goal/task section while preserving baseline structure.")
+                return (true, hintFallback, notes)
+            }
+        }
+
         let issues = validation.errors + validation.warnings
         return (false, "", issues.isEmpty ? ["Tiny output validation failed."] : issues)
     }
@@ -1629,14 +1642,24 @@ final class PromptEngineViewModel: ObservableObject {
         }
         guard !headingIndices.isEmpty else { return nil }
 
-        let preferredGoalIndex = headingIndices.first {
+        guard let preferredGoalIndex = headingIndices.first(where: {
             let heading = baselineLines[$0].trimmingCharacters(in: .whitespaces).lowercased()
             return heading.contains("goal") || heading.contains("task")
-        } ?? headingIndices.first!
+        }) else {
+            return nil
+        }
 
         let nextHeadingIndex = headingIndices.first(where: { $0 > preferredGoalIndex }) ?? baselineLines.count
 
-        let candidateCore = extractTinyGoalSentence(from: candidate)
+        let baselineGoalBody = baselineLines[(preferredGoalIndex + 1)..<nextHeadingIndex]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        let candidateCore = extractTinyGoalSentence(
+            from: candidate,
+            baselineGoal: baselineGoalBody
+        )
         guard !candidateCore.isEmpty else { return nil }
 
         var merged = Array(baselineLines[0...preferredGoalIndex])
@@ -1648,7 +1671,87 @@ final class PromptEngineViewModel: ObservableObject {
         return merged.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func extractTinyGoalSentence(from candidate: String) -> String {
+    private func synthesizeTinyHintRefinement(
+        candidate: String,
+        baselinePrompt: String
+    ) -> String? {
+        let hints = extractTinyHints(from: candidate)
+        guard !hints.isEmpty else { return nil }
+
+        let baselineLines = baselinePrompt.components(separatedBy: .newlines)
+        let headingIndices = baselineLines.indices.filter { idx in
+            baselineLines[idx].trimmingCharacters(in: .whitespaces).hasPrefix("### ")
+        }
+        guard
+            let goalHeadingIndex = headingIndices.first(where: {
+                let heading = baselineLines[$0].trimmingCharacters(in: .whitespaces).lowercased()
+                return heading.contains("goal") || heading.contains("task")
+            })
+        else {
+            return nil
+        }
+
+        let nextHeadingIndex = headingIndices.first(where: { $0 > goalHeadingIndex }) ?? baselineLines.count
+        let baselineGoalBodyLines = baselineLines[(goalHeadingIndex + 1)..<nextHeadingIndex]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !baselineGoalBodyLines.isEmpty else { return nil }
+
+        let baselineGoalBody = baselineGoalBodyLines.joined(separator: " ")
+        let hintClause = hints.prefix(2).joined(separator: " and ")
+        let refinedGoalBody: String
+        if baselineGoalBody.localizedCaseInsensitiveContains(hintClause) {
+            refinedGoalBody = baselineGoalBody
+        } else {
+            refinedGoalBody = "\(baselineGoalBody) Emphasize \(hintClause)."
+        }
+
+        var merged = Array(baselineLines[0...goalHeadingIndex])
+        merged.append(refinedGoalBody)
+        if nextHeadingIndex < baselineLines.count {
+            merged.append(contentsOf: baselineLines[nextHeadingIndex...])
+        }
+
+        return merged.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractTinyHints(from candidate: String) -> [String] {
+        let hintLexicon: [String: String] = [
+            "rule": "explicit rules",
+            "rules": "explicit rules",
+            "output": "explicit outputs",
+            "outputs": "explicit outputs",
+            "check": "completion checks",
+            "checks": "completion checks",
+            "test": "testability",
+            "tests": "testability",
+            "deterministic": "determinism",
+            "constraint": "constraints",
+            "constraints": "constraints",
+            "deliverable": "deliverables",
+            "deliverables": "deliverables"
+        ]
+
+        var orderedHints: [String] = []
+        let tokens = candidate
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+
+        for token in tokens {
+            guard let mapped = hintLexicon[token] else { continue }
+            if !orderedHints.contains(mapped) {
+                orderedHints.append(mapped)
+            }
+            if orderedHints.count >= 3 {
+                break
+            }
+        }
+
+        return orderedHints
+    }
+
+    private func extractTinyGoalSentence(from candidate: String, baselineGoal: String) -> String {
         var lines: [String] = []
         for rawLine in candidate.components(separatedBy: .newlines) {
             let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1659,16 +1762,25 @@ final class PromptEngineViewModel: ObservableObject {
             if trimmed == "```" || trimmed.hasPrefix("```") {
                 continue
             }
+            if trimmed.hasPrefix("#") {
+                continue
+            }
             let lowered = trimmed.lowercased()
             if lowered.contains("rewritten prompt") ||
                 lowered.contains("model family") ||
                 lowered.contains("suggested parameters") ||
                 lowered.contains("applied rules") ||
-                lowered.contains("legacy canonical draft") {
+                lowered.contains("legacy canonical draft") ||
+                lowered.contains("import ") ||
+                lowered.contains("def ") ||
+                lowered.contains("print(") ||
+                lowered.contains("{") ||
+                lowered.contains("}") {
                 continue
             }
 
             let cleaned = trimmed
+                .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty {
@@ -1680,7 +1792,27 @@ final class PromptEngineViewModel: ObservableObject {
             }
         }
 
-        return lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentence = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sentence.isEmpty else { return "" }
+
+        let overlap = lexicalOverlapScore(sentence, baselineGoal)
+        return overlap >= 0.20 ? sentence : ""
+    }
+
+    private func lexicalOverlapScore(_ lhs: String, _ rhs: String) -> Double {
+        let lhsTokens = Set(tokenizeForOverlap(lhs))
+        let rhsTokens = Set(tokenizeForOverlap(rhs))
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0.0 }
+
+        let intersection = lhsTokens.intersection(rhsTokens)
+        return Double(intersection.count) / Double(rhsTokens.count)
+    }
+
+    private func tokenizeForOverlap(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 4 }
     }
 
     private func dedupePromptLinesPreservingOrder(in text: String) -> String {
