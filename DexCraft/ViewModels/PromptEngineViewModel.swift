@@ -163,6 +163,13 @@ final class PromptEngineViewModel: ObservableObject {
         case deliverables
     }
 
+    private enum PromptIntent {
+        case creativeStory
+        case gameDesign
+        case softwareBuild
+        case general
+    }
+
     private struct PromptIR {
         let rawInput: String
         let target: PromptTarget
@@ -378,7 +385,12 @@ final class PromptEngineViewModel: ObservableObject {
                 context: nil,
                 constraints: [],
                 deliverables: [],
-                outputContract: outputContractLines(for: selectedTarget, mode: .minimal, options: options),
+                outputContract: outputContractLines(
+                    for: selectedTarget,
+                    mode: .minimal,
+                    options: options,
+                    intent: inferPromptIntent(from: resolvedInput)
+                ),
                 debugNotes: ["Last-resort fallback to raw input after validation failure."]
             )
         }
@@ -931,8 +943,14 @@ final class PromptEngineViewModel: ObservableObject {
             debugNotes.append("Deduplicated repeated deliverables (case-insensitive exact match).")
         }
 
-        let outputContract = outputContractLines(for: target, mode: mode, options: options)
+        let intent = inferPromptIntent(from: goalOrTask)
+        let resolvedDeliverables = dedupedDeliverables.isEmpty
+            ? seededDeliverables(for: intent, taskText: goalOrTask)
+            : dedupedDeliverables
+
+        let outputContract = outputContractLines(for: target, mode: mode, options: options, intent: intent)
         debugNotes.append("Compiled target-aware output contract for \(target.rawValue).")
+        debugNotes.append("Detected intent: \(String(describing: intent)).")
 
         return PromptIR(
             rawInput: trimmedInput,
@@ -941,7 +959,7 @@ final class PromptEngineViewModel: ObservableObject {
             goalOrTask: goalOrTask,
             context: context,
             constraints: dedupedConstraints,
-            deliverables: dedupedDeliverables,
+            deliverables: resolvedDeliverables,
             outputContract: outputContract,
             debugNotes: debugNotes
         )
@@ -1021,9 +1039,45 @@ final class PromptEngineViewModel: ObservableObject {
     private func outputContractLines(
         for target: PromptTarget,
         mode: RewriteMode,
-        options: EnhancementOptions
+        options: EnhancementOptions,
+        intent: PromptIntent
     ) -> [String] {
         var lines: [String]
+
+        if target != .agenticIDE {
+            switch intent {
+            case .creativeStory:
+                lines = [
+                    "Use sections in this order: Title, Story.",
+                    "Story should include a clear beginning, middle, and ending.",
+                    "Keep narrative voice, tense, and point of view consistent."
+                ]
+            case .gameDesign:
+                lines = [
+                    "Use sections in this order: Concept, Rules, Visual Theme, Interaction Flow.",
+                    "Define deterministic turn order and win/draw conditions.",
+                    "Explain how thematic marks map to board state."
+                ]
+            case .softwareBuild, .general:
+                lines = []
+            }
+
+            if !lines.isEmpty {
+                if options.noConversationalFiller {
+                    lines.append("Avoid conversational filler.")
+                }
+
+                switch mode {
+                case .minimal:
+                    return Array(lines.prefix(1))
+                case .standard:
+                    return lines
+                case .aggressive:
+                    lines.append("Keep structure fixed and do not add extra sections.")
+                    return lines
+                }
+            }
+        }
 
         switch target {
         case .claude:
@@ -1066,6 +1120,58 @@ final class PromptEngineViewModel: ObservableObject {
             }
             return lines
         }
+    }
+
+    private func inferPromptIntent(from text: String) -> PromptIntent {
+        let lowered = text.lowercased()
+
+        if ["story", "narrative", "short story", "plot"].contains(where: lowered.contains) {
+            return .creativeStory
+        }
+
+        let gameTerms = ["tic-tac-toe", "board game", "gameplay", "x's", "o's", "chess"]
+        if gameTerms.contains(where: lowered.contains) && ["design", "rules", "mechanic", "theme"].contains(where: lowered.contains) {
+            return .gameDesign
+        }
+
+        if [
+            "build", "implement", "refactor", "fix", "patch", "test", "code", "repository", "file", "api", "app",
+            "swift", "python", "javascript", "cli", "script"
+        ]
+        .contains(where: lowered.contains) {
+            return .softwareBuild
+        }
+
+        return .general
+    }
+
+    private func seededDeliverables(for intent: PromptIntent, taskText: String) -> [String] {
+        switch intent {
+        case .creativeStory:
+            let subject = extractSubjectAfterAbout(in: taskText) ?? "the requested subject"
+            return [
+                "Write one complete story about \(subject) with a clear beginning, middle, and ending.",
+                "Provide a title and keep voice and tense consistent.",
+                "End with a resolved outcome tied to the main conflict."
+            ]
+        case .gameDesign:
+            return [
+                "Define objective, setup, turn order, and deterministic win/draw rules.",
+                "Specify exactly how the thematic marks map to board symbols and turns.",
+                "Provide at least one example play sequence and one edge-case rule."
+            ]
+        case .softwareBuild, .general:
+            return []
+        }
+    }
+
+    private func extractSubjectAfterAbout(in text: String) -> String? {
+        let lowered = text.lowercased()
+        guard let range = lowered.range(of: "about ") else { return nil }
+        let subject = text[range.upperBound...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:"))
+        return subject.isEmpty ? nil : subject
     }
 
     private func compileFinalPrompt(from ir: PromptIR) -> String {

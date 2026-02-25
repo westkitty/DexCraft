@@ -14,7 +14,7 @@ final class StorageManager {
     private let decoder: JSONDecoder
     private let appSupportURL: URL
 
-    init() {
+    init(appFolderName: String = "DexCraft") {
         self.encoder = JSONEncoder()
         self.decoder = JSONDecoder()
 
@@ -24,7 +24,7 @@ final class StorageManager {
 
         let baseURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
-        self.appSupportURL = baseURL.appendingPathComponent("DexCraft", isDirectory: true)
+        self.appSupportURL = baseURL.appendingPathComponent(appFolderName, isDirectory: true)
 
         ensureAppSupportDirectory()
     }
