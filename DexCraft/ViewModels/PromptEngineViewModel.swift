@@ -535,31 +535,38 @@ final class PromptEngineViewModel: ObservableObject {
                 )
                 let tinyOutput = tinyResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !tinyOutput.isEmpty {
-                    let tinyValidation = validate(
-                        finalPrompt: tinyOutput,
+                    let tinyEvaluation = evaluateTinyModelCandidate(
+                        candidate: tinyOutput,
+                        baselinePrompt: selectedFinalPrompt,
                         ir: selectedIR,
                         options: options
                     )
-                    if tinyValidation.isValid {
-                        selectedFinalPrompt = tinyOutput
+                    if tinyEvaluation.accepted {
+                        selectedFinalPrompt = tinyEvaluation.sanitizedOutput
                         tinyModelStatus = "Tiny model pass applied (\(tinyResult.durationMs)ms)"
                         fallbackNotes.append("Embedded tiny model selected output (\(tinyResult.durationMs)ms).")
                         fallbackNotes.append("Tiny runtime: \(tinyResult.runtimePath)")
+                        if !tinyEvaluation.notes.isEmpty {
+                            fallbackNotes.append(contentsOf: tinyEvaluation.notes.map { "Tiny note: \($0)" })
+                        }
                     } else {
                         tinyModelStatus = "Tiny model output failed validation. Kept heuristic result."
                         fallbackNotes.append("Tiny model output failed validation; heuristic result kept.")
-                        if !tinyValidation.errors.isEmpty {
-                            fallbackNotes.append("Tiny validation errors: \(tinyValidation.errors.joined(separator: " | "))")
+                        if !tinyEvaluation.notes.isEmpty {
+                            fallbackNotes.append("Tiny validation errors: \(tinyEvaluation.notes.joined(separator: " | "))")
                         }
+                        statusMessage = tinyModelStatus
                     }
                 } else {
                     tinyModelStatus = "Tiny model returned empty output. Kept heuristic result."
                     fallbackNotes.append("Tiny model returned empty output; heuristic result kept.")
+                    statusMessage = tinyModelStatus
                 }
             } catch {
                 tinyModelStatus = "Tiny model unavailable: \(error.localizedDescription)"
                 fallbackNotes.append("Tiny model unavailable; heuristic result kept.")
                 fallbackNotes.append("Tiny model error: \(error.localizedDescription)")
+                statusMessage = tinyModelStatus
             }
         } else {
             tinyModelStatus = ""
@@ -1561,6 +1568,78 @@ final class PromptEngineViewModel: ObservableObject {
             warnings: warnings,
             metrics: metrics
         )
+    }
+
+    private func evaluateTinyModelCandidate(
+        candidate: String,
+        baselinePrompt: String,
+        ir: PromptIR,
+        options: EnhancementOptions
+    ) -> (accepted: Bool, sanitizedOutput: String, notes: [String]) {
+        var notes: [String] = []
+        var working = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !working.isEmpty else {
+            return (false, "", ["Tiny model output was empty."])
+        }
+
+        let forbiddenHeadings = [
+            "### Model Family",
+            "### Suggested Parameters",
+            "### Applied Rules",
+            "### Warnings",
+            "### Canonical Draft (Reference)",
+            "### Legacy Canonical Draft"
+        ]
+        if forbiddenHeadings.contains(where: { working.contains($0) }) {
+            return (false, "", ["Tiny model output contained forbidden scaffold headings."])
+        }
+
+        let minLength = max(80, baselinePrompt.count / 4)
+        if working.count < minLength {
+            return (false, "", ["Tiny model output too short to be reliable (\(working.count) chars)."])
+        }
+
+        working = dedupePromptLinesPreservingOrder(in: working)
+
+        let missingConstraints = ir.constraints.filter { !working.contains($0) }
+        if !missingConstraints.isEmpty {
+            notes.append("Re-appended \(missingConstraints.count) missing constraints from baseline.")
+            working += "\n\n" + missingConstraints.joined(separator: "\n")
+        }
+
+        let validation = validate(finalPrompt: working, ir: ir, options: options)
+        if validation.isValid {
+            return (true, working, notes)
+        }
+
+        let issues = validation.errors + validation.warnings
+        return (false, "", issues.isEmpty ? ["Tiny output validation failed."] : issues)
+    }
+
+    private func dedupePromptLinesPreservingOrder(in text: String) -> String {
+        var seen = Set<String>()
+        var lines: [String] = []
+
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                lines.append(line)
+                continue
+            }
+
+            if isSeparatorOnlyLine(trimmed) {
+                lines.append(line)
+                continue
+            }
+
+            let key = normalizeLineForDedupe(trimmed)
+            if seen.insert(key).inserted {
+                lines.append(line)
+            }
+        }
+
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func computeAmbiguityIndex(for text: String) -> Double {

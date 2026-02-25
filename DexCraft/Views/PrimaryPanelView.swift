@@ -112,6 +112,15 @@ struct PrimaryPanelView: View {
                 .tint(viewModel.isEmbeddedTinyModelEnabled ? .cyan : .secondary)
             }
 
+            if viewModel.isEmbeddedTinyModelEnabled && !viewModel.tinyModelStatus.isEmpty {
+                Text(viewModel.tinyModelStatus)
+                    .font(.caption2)
+                    .foregroundStyle(
+                        viewModel.tinyModelStatus.localizedCaseInsensitiveContains("applied") ? .green : .yellow
+                    )
+                    .lineLimit(2)
+            }
+
             VStack(alignment: .leading, spacing: 6) {
                 Text("Target Environment")
                     .font(.caption)
