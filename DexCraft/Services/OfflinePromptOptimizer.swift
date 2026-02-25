@@ -464,6 +464,8 @@ final class EmbeddedTinyLLMService {
         Rewrite user prompts for execution quality.
         Keep constraints and deliverables intact.
         Return only one rewritten prompt.
+        Do not include meta commentary (for example: "Here is a rewritten prompt").
+        Preserve existing markdown headings exactly when headings are present.
         """
     }
 
@@ -474,7 +476,7 @@ final class EmbeddedTinyLLMService {
         Preserve all constraints and deliverables.
         Keep headings and section order unchanged when headings exist.
         Do not add or remove sections.
-        Return only the rewritten prompt text with no labels or explanations.
+        Return only the rewritten prompt text with no labels, prefaces, or explanations.
 
         \(request.prompt)
         """

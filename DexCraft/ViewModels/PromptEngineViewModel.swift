@@ -103,6 +103,14 @@ final class PromptEngineViewModel: ObservableObject {
         "generally", "roughly", "approximately", "kind", "stuff",
         "things", "probably", "might", "could", "etc"
     ]
+    private let semanticStopwords: Set<String> = [
+        "the", "and", "for", "with", "that", "this", "from", "into", "your", "you", "are", "was", "were",
+        "have", "has", "had", "will", "would", "should", "could", "can", "not", "only", "just", "then",
+        "task", "request", "prompt", "rewrite", "rewritten", "response", "output", "outputs", "goal",
+        "goals", "context", "constraint", "constraints", "deliverable", "deliverables", "validation",
+        "checks", "check", "requirement", "requirements", "behavior", "functional", "implementation",
+        "implement", "assistant", "section", "sections"
+    ]
 
     private var lastCanonicalPrompt: CanonicalPrompt?
     private var lastOptimizationOutput: OptimizationOutput?
@@ -1595,8 +1603,26 @@ final class PromptEngineViewModel: ObservableObject {
             working += "\n\n" + missingConstraints.joined(separator: "\n")
         }
 
+        let hasBoilerplateWrapper = containsTinyBoilerplateWrapper(in: working)
+        if hasBoilerplateWrapper {
+            notes.append("Tiny output contained wrapper language; skipped direct replacement.")
+        }
+
+        let preservesHeadingStructure = preservesBaselineHeadingStructure(
+            candidate: working,
+            baselinePrompt: baselinePrompt
+        )
+        if !preservesHeadingStructure {
+            notes.append("Tiny output did not preserve section headings; skipped direct replacement.")
+        }
+
+        let semanticCoverage = semanticAnchorCoverage(candidate: working, baselineTask: ir.goalOrTask)
+        if semanticCoverage < 0.34 {
+            notes.append(String(format: "Tiny output semantic coverage too low (%.2f).", semanticCoverage))
+        }
+
         let validation = validate(finalPrompt: working, ir: ir, options: options)
-        if validation.isValid {
+        if validation.isValid && !hasBoilerplateWrapper && preservesHeadingStructure && semanticCoverage >= 0.34 {
             return (true, working, notes)
         }
 
@@ -1614,6 +1640,7 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         if
+            semanticCoverage >= 0.20,
             let hintFallback = synthesizeTinyHintRefinement(
                 candidate: working,
                 baselinePrompt: baselinePrompt
@@ -1628,6 +1655,55 @@ final class PromptEngineViewModel: ObservableObject {
 
         let issues = validation.errors + validation.warnings
         return (false, "", issues.isEmpty ? ["Tiny output validation failed."] : issues)
+    }
+
+    private func containsTinyBoilerplateWrapper(in text: String) -> Bool {
+        let lowered = text.lowercased()
+        let wrappers = [
+            "here is a rewritten prompt",
+            "here's a rewritten prompt",
+            "this rewritten prompt",
+            "it includes:",
+            "meets all constraints",
+            "delivers the requested functionality"
+        ]
+        return wrappers.contains(where: lowered.contains)
+    }
+
+    private func preservesBaselineHeadingStructure(
+        candidate: String,
+        baselinePrompt: String
+    ) -> Bool {
+        let baselineHeadings = headingLines(in: baselinePrompt)
+        guard !baselineHeadings.isEmpty else { return true }
+
+        let candidateHeadings = Set(headingLines(in: candidate))
+        return baselineHeadings.allSatisfy(candidateHeadings.contains)
+    }
+
+    private func headingLines(in text: String) -> [String] {
+        text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { $0.hasPrefix("### ") }
+    }
+
+    private func semanticAnchorCoverage(candidate: String, baselineTask: String) -> Double {
+        let anchors = Set(semanticAnchorTokens(from: baselineTask))
+        guard !anchors.isEmpty else { return 1.0 }
+
+        let candidateTokens = Set(semanticAnchorTokens(from: candidate))
+        guard !candidateTokens.isEmpty else { return 0.0 }
+
+        let overlap = anchors.intersection(candidateTokens)
+        return Double(overlap.count) / Double(anchors.count)
+    }
+
+    private func semanticAnchorTokens(from text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 3 && !semanticStopwords.contains($0) }
     }
 
     private func synthesizeTinyGoalRefinement(
