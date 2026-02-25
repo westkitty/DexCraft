@@ -361,7 +361,7 @@ enum EmbeddedTinyModelError: LocalizedError {
         case .tinyModelNotFound:
             return "Bundled tiny model is missing. Reinstall DexCraft or choose a local .gguf model override in Settings."
         case .fallbackModelNotFound:
-            return "Fallback model is not configured. Add a fallback .gguf path in Settings."
+            return "Fallback model is unavailable. Add a fallback .gguf path or reinstall DexCraft to restore bundled tiny model."
         case .processFailed(let tier, let exitCode, let detail):
             let cleanedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
             let condensedDetail = String(cleanedDetail.prefix(320))
@@ -675,6 +675,10 @@ final class EmbeddedTinyLLMService {
         tier: EmbeddedLocalModelTier
     ) throws -> String {
         let environment = ProcessInfo.processInfo.environment
+        let tinyCandidates = [
+            "SmolLM2-135M-Instruct-Q3_K_M.gguf",
+            "SmolLM2-135M-Instruct-Q4_K_M.gguf"
+        ]
         switch tier {
         case .tinyPrimary:
             if let explicit = settings.resolvedTinyModelPath, fileManager.fileExists(atPath: explicit) {
@@ -690,18 +694,9 @@ final class EmbeddedTinyLLMService {
             }
 
             if
-                let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
+                let bundledTiny = resolveBundledModelPath(candidates: tinyCandidates)
             {
-                let bundledCandidates = [
-                    "SmolLM2-135M-Instruct-Q3_K_M.gguf",
-                    "SmolLM2-135M-Instruct-Q4_K_M.gguf"
-                ]
-                for filename in bundledCandidates {
-                    let bundledModelPath = runtimeDirectory.appendingPathComponent(filename).path
-                    if fileManager.fileExists(atPath: bundledModelPath) {
-                        return bundledModelPath
-                    }
-                }
+                return bundledTiny
             }
 
             throw EmbeddedTinyModelError.tinyModelNotFound
@@ -719,24 +714,48 @@ final class EmbeddedTinyLLMService {
                 return envPath
             }
 
+            let bundledFallbackCandidates = [
+                "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+                "SmolLM2-360M-Instruct-Q3_K_M.gguf",
+                "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
+                "Qwen2.5-0.5B-Instruct-Q3_K_M.gguf"
+            ]
+            if let bundledFallback = resolveBundledModelPath(candidates: bundledFallbackCandidates) {
+                return bundledFallback
+            }
+
+            // If no dedicated fallback model is present, reuse tiny model as best-effort secondary tier.
+            if let tinyExplicit = settings.resolvedTinyModelPath, fileManager.fileExists(atPath: tinyExplicit) {
+                return tinyExplicit
+            }
             if
-                let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
+                let tinyEnvPath = environment["DEXCRAFT_EMBEDDED_TINY_MODEL_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !tinyEnvPath.isEmpty,
+                fileManager.fileExists(atPath: tinyEnvPath)
             {
-                let bundledCandidates = [
-                    "SmolLM2-360M-Instruct-Q4_K_M.gguf",
-                    "SmolLM2-360M-Instruct-Q3_K_M.gguf",
-                    "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
-                    "Qwen2.5-0.5B-Instruct-Q3_K_M.gguf"
-                ]
-                for filename in bundledCandidates {
-                    let bundledModelPath = runtimeDirectory.appendingPathComponent(filename).path
-                    if fileManager.fileExists(atPath: bundledModelPath) {
-                        return bundledModelPath
-                    }
-                }
+                return tinyEnvPath
+            }
+            if let bundledTiny = resolveBundledModelPath(candidates: tinyCandidates) {
+                return bundledTiny
             }
 
             throw EmbeddedTinyModelError.fallbackModelNotFound
         }
+    }
+
+    private func resolveBundledModelPath(candidates: [String]) -> String? {
+        guard
+            let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
+        else {
+            return nil
+        }
+
+        for filename in candidates {
+            let bundledModelPath = runtimeDirectory.appendingPathComponent(filename).path
+            if fileManager.fileExists(atPath: bundledModelPath) {
+                return bundledModelPath
+            }
+        }
+        return nil
     }
 }

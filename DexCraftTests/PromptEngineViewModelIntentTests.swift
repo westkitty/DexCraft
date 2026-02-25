@@ -324,6 +324,69 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertEqual(fallbackStatusCount, 50)
     }
 
+    func testFallbackWithoutConfiguredPathDoesNotReportModelNotConfigured() throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-mock-runtime-\(UUID().uuidString).sh")
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-mock-runtime-state-\(UUID().uuidString)")
+
+        let script = """
+        #!/bin/sh
+        STATE_FILE="$1"
+        shift
+        if [ ! -f "$STATE_FILE" ]; then
+          touch "$STATE_FILE"
+          echo "forced primary failure" 1>&2
+          exit 42
+        fi
+        echo "Design a website that clearly explains why this dog is cool, including personality, habits, and standout traits."
+        exit 0
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: scriptURL.path)
+
+        let wrapperURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-mock-runtime-wrapper-\(UUID().uuidString).sh")
+        let wrapper = """
+        #!/bin/sh
+        "\(scriptURL.path)" "\(stateURL.path)" "$@"
+        """
+        try wrapper.write(to: wrapperURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: wrapperURL.path)
+
+        defer {
+            try? FileManager.default.removeItem(at: scriptURL)
+            try? FileManager.default.removeItem(at: wrapperURL)
+            try? FileManager.default.removeItem(at: stateURL)
+        }
+
+        setenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH", wrapperURL.path, 1)
+        defer { unsetenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH") }
+
+        let tinyModelPath = makeInvalidModelFile()
+        defer { try? FileManager.default.removeItem(atPath: tinyModelPath) }
+
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = true
+        settings.useEmbeddedFallbackModel = true
+        settings.embeddedTinyModelPath = tinyModelPath
+        settings.embeddedFallbackModelPath = nil
+        viewModel.updateConnectedModelSettings(settings)
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.roughInput = "Design a website that explains how cool my dog is."
+        viewModel.forgePrompt()
+
+        XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("fallback model"))
+        XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("not configured"))
+        XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("fallback model unavailable"))
+    }
+
     private func makeInvalidModelFile() -> String {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dexcraft-invalid-model-\(UUID().uuidString).gguf")

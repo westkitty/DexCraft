@@ -10,7 +10,7 @@ enum PromptFormatStyle: String, Codable {
 struct ConnectedModelSettings: Codable, Equatable {
     static let unknownUnsetLabel = "unknown/unset"
     static let defaultTinyModelIdentifier = "SmolLM2-135M-Instruct-Q3_K_M (Bundled)"
-    static let defaultFallbackModelIdentifier = "Fallback Model (Unconfigured)"
+    static let defaultFallbackModelIdentifier = "Auto (Bundled Tiny if needed)"
 
     // TODO: Replace defaults with exact connected model versions from Settings once known.
     var claudeModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
