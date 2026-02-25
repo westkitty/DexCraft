@@ -147,6 +147,23 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         XCTAssertFalse(result.optimizedText.contains("### Questions"))
     }
 
+    func testIDECodingScenarioAvoidsDuplicateDeliverableSets() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Add a bunch of new flashy animations to this website so that it feels more lively.",
+            context: HeuristicOptimizationContext(target: .claude, scenario: .ideCodingAssistant)
+        )
+
+        let lowered = result.optimizedText.lowercased()
+        XCTAssertTrue(
+            lowered.contains("plan, unified diff, tests, validation commands") ||
+            lowered.contains("goal, plan, deliverables, validation")
+        )
+        let deliverablesHeadingCount = result.optimizedText.components(separatedBy: "### Deliverables").count - 1
+        XCTAssertEqual(deliverablesHeadingCount, 1)
+        XCTAssertFalse(result.optimizedText.localizedCaseInsensitiveContains("plan with deterministic ordered steps"))
+        XCTAssertFalse(result.optimizedText.localizedCaseInsensitiveContains("execution-oriented"))
+    }
+
     func testGapDrivenStrongPromptAvoidsUnnecessaryExpansion() {
         let baseline = """
         ### Goal

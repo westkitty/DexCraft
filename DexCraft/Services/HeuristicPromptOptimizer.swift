@@ -113,6 +113,7 @@ enum HeuristicPromptOptimizer {
         case canonicalize = "Canonicalize headings/order"
         case contradictionRepair = "Repair contradictions"
         case sentenceRewrite = "Sentence-level rewrite"
+        case requirementsInference = "Infer requirements"
         case deliverablesInference = "Infer deliverables"
         case outputFormat = "Add output format"
         case successCriteria = "Add success criteria"
@@ -126,6 +127,7 @@ enum HeuristicPromptOptimizer {
     private enum SectionKey: Int, CaseIterable {
         case goal
         case context
+        case requirements
         case constraints
         case deliverables
         case outputFormat
@@ -136,6 +138,7 @@ enum HeuristicPromptOptimizer {
             switch self {
             case .goal: return "Goal"
             case .context: return "Context"
+            case .requirements: return "Requirements"
             case .constraints: return "Constraints"
             case .deliverables: return "Deliverables"
             case .outputFormat: return "Output Format"
@@ -161,6 +164,7 @@ enum HeuristicPromptOptimizer {
         let needsCanonicalization: Bool
         let needsContradictionRepair: Bool
         let needsSentenceRewrite: Bool
+        let needsRequirements: Bool
         let needsDeliverables: Bool
         let needsOutputFormat: Bool
         let needsSuccessCriteria: Bool
@@ -174,6 +178,7 @@ enum HeuristicPromptOptimizer {
             needsCanonicalization ||
                 needsContradictionRepair ||
                 needsSentenceRewrite ||
+                needsRequirements ||
                 needsDeliverables ||
                 needsOutputFormat ||
                 needsSuccessCriteria ||
@@ -540,7 +545,9 @@ enum HeuristicPromptOptimizer {
             analysis: analysis,
             knownSectionCount: knownSectionCount
         )
+        let isSoftwareIntent = intent == .softwareBuild
         let weakDeliverables = hasWeakDeliverables(in: input)
+        let weakRequirements = hasWeakRequirements(in: input)
         let hasKnownHeadings = parsedBlocks.contains(where: { $0.key != nil })
         let needsCanonicalization = hasKnownHeadings && !isLikelyCanonicalOrder(input)
         let needsSentenceRewrite = analysis.ambiguityCount > 0 || containsHedgingLexicon(in: input)
@@ -557,9 +564,15 @@ enum HeuristicPromptOptimizer {
             needsCanonicalization: needsCanonicalization,
             needsContradictionRepair: !analysis.contradictions.isEmpty,
             needsSentenceRewrite: needsSentenceRewrite,
+            needsRequirements: isSoftwareIntent &&
+                (
+                    weakRequirements ||
+                    ((underspecified || outputNeedsUpgrade || analysis.ambiguityCount > 0 || analysis.isVagueGoal) &&
+                        !containsHeading("Requirements", in: input))
+                ),
             needsDeliverables: !analysis.hasEnumeratedDeliverables || weakDeliverables,
             needsOutputFormat: !(analysis.hasOutputFormatHeading || analysis.hasOutputTemplate) || outputNeedsUpgrade,
-            needsSuccessCriteria: (ambiguous || underspecified) && !analysis.hasSuccessCriteriaHeading,
+            needsSuccessCriteria: (analysis.ambiguityCount > 0 || analysis.isVagueGoal || underspecified) && !analysis.hasSuccessCriteriaHeading,
             needsScopeBounds: analysis.scopeLeak && !analysis.hasScopeBounds,
             needsQuestions: shouldAskQuestions && (ambiguous || underspecified) && !analysis.hasQuestionsHeading,
             needsDomainPack: domainMissing,
@@ -574,6 +587,7 @@ enum HeuristicPromptOptimizer {
         if gaps.needsContradictionRepair { ordered.append(.contradictionRepair) }
         if gaps.needsSentenceRewrite { ordered.append(.sentenceRewrite) }
         if gaps.needsCanonicalization { ordered.append(.canonicalize) }
+        if gaps.needsRequirements { ordered.append(.requirementsInference) }
         if gaps.needsDeliverables { ordered.append(.deliverablesInference) }
         if gaps.needsOutputFormat { ordered.append(.outputFormat) }
         if gaps.needsSuccessCriteria { ordered.append(.successCriteria) }
@@ -586,7 +600,7 @@ enum HeuristicPromptOptimizer {
         var plans: [[TransformKey]] = ordered.map { [$0] }
 
         let structuralBundle = ordered.filter {
-            [.contradictionRepair, .sentenceRewrite, .deliverablesInference, .outputFormat, .scopeBounds, .questions, .successCriteria, .domainPack, .qualityGate, .dedupe].contains($0)
+            [.contradictionRepair, .sentenceRewrite, .requirementsInference, .deliverablesInference, .outputFormat, .scopeBounds, .questions, .successCriteria, .domainPack, .qualityGate, .dedupe].contains($0)
         }
 
         if !structuralBundle.isEmpty {
@@ -594,7 +608,7 @@ enum HeuristicPromptOptimizer {
         }
 
         let formatBundle = ordered.filter {
-            [.deliverablesInference, .outputFormat, .successCriteria, .questions, .qualityGate].contains($0)
+            [.requirementsInference, .deliverablesInference, .outputFormat, .successCriteria, .questions, .qualityGate].contains($0)
         }
         if formatBundle.count >= 2 {
             plans.append(formatBundle)
@@ -603,6 +617,7 @@ enum HeuristicPromptOptimizer {
         if ordered.contains(.domainPack) {
             var domainPlan: [TransformKey] = [.domainPack]
             if ordered.contains(.qualityGate) { domainPlan.append(.qualityGate) }
+            if ordered.contains(.requirementsInference) { domainPlan.append(.requirementsInference) }
             if ordered.contains(.deliverablesInference) { domainPlan.append(.deliverablesInference) }
             if ordered.contains(.outputFormat) { domainPlan.append(.outputFormat) }
             plans.append(domainPlan)
@@ -629,6 +644,8 @@ enum HeuristicPromptOptimizer {
                 text = contradictionRepairCandidate(text)
             case .sentenceRewrite:
                 text = sentenceRewriteCandidate(text)
+            case .requirementsInference:
+                text = requirementsCandidate(text, context: context)
             case .deliverablesInference:
                 text = deliverablesCandidate(text, context: context)
             case .outputFormat:
@@ -685,6 +702,41 @@ enum HeuristicPromptOptimizer {
             }
         }
 
+        if intent == .softwareBuild && needsOutputFormatUpgrade(in: text, context: context, intent: intent) {
+            let penalty = -max(6, weights.outputFormat / 3)
+            score += penalty
+            breakdown["generic_output_contract_for_software"] = penalty
+        }
+
+        if intent == .softwareBuild {
+            let requiresRequirementsSection =
+                underspecified ||
+                analysis.ambiguityCount > 0 ||
+                analysis.isVagueGoal ||
+                needsOutputFormatUpgrade(in: text, context: context, intent: intent)
+
+            if requiresRequirementsSection {
+                if containsHeading("Requirements", in: text) {
+                    let bonus = 12
+                    score += bonus
+                    breakdown["requirements_present"] = bonus
+                } else {
+                    let penalty = -8
+                    score += penalty
+                    breakdown["missing_requirements"] = penalty
+                }
+            } else if containsHeading("Requirements", in: text) {
+                score += 2
+                breakdown["requirements_optional_bonus"] = 2
+            }
+
+            if hasWeakRequirements(in: text) {
+                let penalty = -6
+                score += penalty
+                breakdown["weak_requirements"] = penalty
+            }
+        }
+
         if analysis.hasEnumeratedDeliverables {
             score += weights.deliverables
             breakdown["enumerated_deliverables"] = weights.deliverables
@@ -709,6 +761,10 @@ enum HeuristicPromptOptimizer {
         if (ambiguous || underspecified) && analysis.hasSuccessCriteriaHeading {
             score += weights.successCriteria
             breakdown["success_criteria_for_ambiguity"] = weights.successCriteria
+        } else if ambiguous {
+            let penalty = -max(2, weights.successCriteria / 3)
+            score += penalty
+            breakdown["missing_success_criteria_ambiguous"] = penalty
         } else if underspecified {
             let penalty = -max(3, weights.successCriteria / 2)
             score += penalty
@@ -723,10 +779,19 @@ enum HeuristicPromptOptimizer {
         if (ambiguous || underspecified) && analysis.hasQuestionsHeading {
             score += weights.questions
             breakdown["questions_for_ambiguity"] = weights.questions
-        } else if underspecified {
+        } else if ambiguous && shouldInsertQuestions(for: intent) {
+            let penalty = -max(2, max(1, weights.questions / 2))
+            score += penalty
+            breakdown["missing_questions_ambiguous"] = penalty
+        } else if underspecified && shouldInsertQuestions(for: intent) {
             let penalty = -max(2, weights.questions / 2)
             score += penalty
             breakdown["missing_questions_underspecified"] = penalty
+        }
+
+        if containsHedgingLexicon(in: text) {
+            score -= 2
+            breakdown["hedging_lexicon"] = -2
         }
 
         let exampleBonus = min(12, analysis.examplesCount * weights.examplesPerUnit)
@@ -794,12 +859,25 @@ enum HeuristicPromptOptimizer {
         if !(baseline.hasOutputFormatHeading || baseline.hasOutputTemplate) && (candidate.hasOutputFormatHeading || candidate.hasOutputTemplate) {
             gain += 2
         }
-        if (baselineIntent == .creativeStory || baselineIntent == .gameDesign) {
+        if (baselineIntent == .creativeStory || baselineIntent == .gameDesign || baselineIntent == .softwareBuild) {
             let baselineNeedsUpgrade = needsOutputFormatUpgrade(in: baselineText, context: context, intent: baselineIntent)
             let candidateNeedsUpgrade = needsOutputFormatUpgrade(in: candidateText, context: context, intent: baselineIntent)
             if baselineNeedsUpgrade && !candidateNeedsUpgrade {
                 gain += 2
             }
+        }
+
+        let baselineNeedsRequirements =
+            baselineIntent == .softwareBuild &&
+            (baselineUnderspecified ||
+                baseline.ambiguityCount > 0 ||
+                baseline.isVagueGoal ||
+                needsOutputFormatUpgrade(in: baselineText, context: context, intent: baselineIntent))
+
+        if baselineNeedsRequirements &&
+            !containsHeading("Requirements", in: baselineText) &&
+            containsHeading("Requirements", in: candidateText) {
+            gain += 2
         }
 
         if !baseline.hasEnumeratedDeliverables && candidate.hasEnumeratedDeliverables {
@@ -820,6 +898,10 @@ enum HeuristicPromptOptimizer {
         }
 
         if !baseline.contradictions.isEmpty && candidate.contradictions.count < baseline.contradictions.count {
+            gain += 2
+        }
+
+        if containsHedgingLexicon(in: baselineText) && !containsHedgingLexicon(in: candidateText) {
             gain += 2
         }
 
@@ -926,6 +1008,20 @@ enum HeuristicPromptOptimizer {
             let shielded = PromptHeuristics.shieldProtectedLiterals(in: text)
             let rewritten = rewriteSentences(in: shielded.shielded)
             return PromptHeuristics.restoreProtectedLiterals(in: rewritten, table: shielded.table)
+        }
+    }
+
+    private static func requirementsCandidate(_ input: String, context: HeuristicOptimizationContext) -> String {
+        transformPreservingCodeFences(input) { text in
+            let intent = inferIntent(from: text)
+            guard intent == .softwareBuild else { return text }
+
+            let inferred = inferRequirements(from: text, context: context)
+            if containsHeading("Requirements", in: text) {
+                return replaceSectionBody(in: text, title: "Requirements", body: inferred)
+            }
+
+            return appendSection(to: text, title: "Requirements", body: inferred)
         }
     }
 
@@ -1079,6 +1175,11 @@ enum HeuristicPromptOptimizer {
             let intent = inferIntent(from: text)
             let goalSeed = extractGoalSeed(from: text)
             let inferredDeliverables = inferDeliverables(from: text, context: context)
+            let inferredRequirements = inferRequirements(from: text, context: context)
+
+            if intent == .softwareBuild && !containsHeading("Requirements", in: output) {
+                output = appendSection(to: output, title: "Requirements", body: inferredRequirements)
+            }
 
             for key in policy.requiredSectionsForAmbiguity {
                 if containsHeading(key.headingTitle, in: output) {
@@ -1115,6 +1216,8 @@ enum HeuristicPromptOptimizer {
                     )
                 case .context:
                     output = appendSection(to: output, title: key.headingTitle, body: ["Use only the context provided in this prompt."])
+                case .requirements:
+                    output = appendSection(to: output, title: key.headingTitle, body: inferredRequirements)
                 }
             }
 
@@ -1316,6 +1419,70 @@ enum HeuristicPromptOptimizer {
         return numbered
     }
 
+    private static func inferRequirements(from text: String, context: HeuristicOptimizationContext) -> [String] {
+        let nonCodeText = PromptTextGuards.splitByCodeFences(text).compactMap { segment -> String? in
+            if case let .text(value) = segment { return value }
+            return nil
+        }
+        .joined(separator: "\n")
+        let lowered = nonCodeText.lowercased()
+        let tokens = tokenSet(from: lowered)
+        let isGameRequest = lowered.contains("tic-tac-toe") || ["game", "platformer", "chess"].contains(where: tokens.contains)
+        let isVisualRequest =
+            ["animation", "website", "ui", "frontend", "interface", "animations"].contains(where: tokens.contains) ||
+            lowered.contains("user interface")
+        let subject = extractGoalSeed(from: nonCodeText)
+
+        var lines: [String]
+        if lowered.contains("platformer") {
+            lines = [
+                "- Define deterministic player controls, movement physics, and core game loop for a 2D side-scroller.",
+                "- Specify level progression, obstacles/enemies, checkpoints, and completion conditions.",
+                "- Describe 16-bit SNES-style visual direction and how the dog protagonist appears in gameplay/UI."
+            ]
+        } else if lowered.contains("chess") {
+            lines = [
+                "- Define board state representation and legal move rules for every piece type.",
+                "- Specify check, checkmate, stalemate, and illegal-move handling deterministically.",
+                "- Include deterministic validation scenarios for opening moves, captures, and endgame outcomes."
+            ]
+        } else if lowered.contains("tic-tac-toe") {
+            lines = [
+                "- Define board representation, turn order, legal move checks, and win/draw detection.",
+                "- Specify deterministic mapping for custom marks (cats/dogs) across board and turn state.",
+                "- Include validation cases for wins, draws, and invalid move handling."
+            ]
+        } else if isVisualRequest {
+            lines = [
+                "- List exact surfaces/components that receive new animations and intended user-facing effect.",
+                "- Define deterministic animation constraints (duration, easing, trigger conditions, reduced-motion fallback).",
+                "- Specify validation checks to confirm improved liveliness without breaking layout or interaction flow."
+            ]
+        } else if isGameRequest {
+            lines = [
+                "- Define core gameplay loop, player actions, and deterministic win/lose conditions.",
+                "- Specify data/state model for game entities and progression behavior.",
+                "- Provide deterministic validation scenarios covering standard flow and key edge cases."
+            ]
+        } else {
+            lines = [
+                "- Translate the goal into concrete, testable functional requirements with explicit inputs/outputs.",
+                "- Specify behavioral constraints and out-of-scope boundaries to avoid unintended expansion.",
+                "- Define deterministic validation checks tied directly to each major requirement."
+            ]
+        }
+
+        if subject.count > 8 && !subject.lowercased().contains("###") {
+            lines[0] = lines[0].replacingOccurrences(of: "the goal", with: "\"\(subject)\"")
+        }
+
+        if context.scenario == .ideCodingAssistant {
+            lines.append("- Tie each requirement to specific files/components before producing patch steps.")
+        }
+
+        return dedupePreservingOrder(lines)
+    }
+
     private static func defaultDeliverables(for context: HeuristicOptimizationContext) -> [String] {
         switch context.scenario {
         case .cliAssistant:
@@ -1361,7 +1528,13 @@ enum HeuristicPromptOptimizer {
                     "Define deterministic win, draw, and invalid-move behavior.",
                     "Explicitly map cat/dog marks to player turns and board state."
                 ]
-            case .softwareBuild, .general:
+            case .softwareBuild:
+                return [
+                    "Use sections in this order: Goal, Requirements, Constraints, Deliverables, Validation.",
+                    "Requirements must include concrete behavior and visual/interaction expectations.",
+                    "Validation must include deterministic checks tied to each requirement."
+                ]
+            case .general:
                 break
             }
         }
@@ -1428,10 +1601,10 @@ enum HeuristicPromptOptimizer {
             ]))
         case .ideCodingAssistant:
             keywords += ["Unified Diff", "Validation Commands"]
-            supplements.append(("Deliverables", [
-                "1. Plan with deterministic ordered steps.",
-                "2. Unified Diff limited to touched files.",
-                "3. Tests and validation commands."
+            supplements.append(("Output Format", [
+                "Use sections: Goal, Plan, Deliverables, Validation.",
+                "Include changed files and deterministic test/validation steps.",
+                "Do not duplicate deliverables across sections."
             ]))
         case .researchSummarization:
             keywords += ["Citations", "Confidence"]
@@ -1520,15 +1693,7 @@ enum HeuristicPromptOptimizer {
         let withoutHashes = stripHeadingHashes(trimmed)
         let normalized = withoutHashes.lowercased()
 
-        let mapping: [(aliases: [String], key: SectionKey)] = [
-            (["goal", "objective", "task"], .goal),
-            (["context"], .context),
-            (["constraints", "constraint"], .constraints),
-            (["deliverables", "deliverable"], .deliverables),
-            (["output format", "output contract", "format"], .outputFormat),
-            (["questions", "clarifying questions"], .questions),
-            (["success criteria", "acceptance criteria"], .successCriteria)
-        ]
+        let mapping = headingAliases
 
         for item in mapping {
             for alias in item.aliases {
@@ -1550,6 +1715,23 @@ enum HeuristicPromptOptimizer {
         }
 
         return nil
+    }
+
+    private static var headingAliases: [(aliases: [String], key: SectionKey)] {
+        [
+            (["goal", "objective", "task"], .goal),
+            (["context"], .context),
+            (["requirements", "requirement", "spec", "specification"], .requirements),
+            (["constraints", "constraint"], .constraints),
+            (["deliverables", "deliverable"], .deliverables),
+            (["output format", "output contract", "format"], .outputFormat),
+            (["questions", "clarifying questions"], .questions),
+            (["success criteria", "acceptance criteria"], .successCriteria)
+        ]
+    }
+
+    private static func sectionKey(for heading: String) -> SectionKey? {
+        parseHeading("### \(heading)")?.key
     }
 
     private static func stripHeadingHashes(_ text: String) -> String {
@@ -1640,6 +1822,7 @@ enum HeuristicPromptOptimizer {
         let parsed = parseBlocks(from: text)
         var rendered: [String] = []
         let target = normalizeHeading(title)
+        let targetKey = sectionKey(for: title)
 
         if !parsed.preamble.isEmpty {
             rendered.append(parsed.preamble.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
@@ -1649,7 +1832,7 @@ enum HeuristicPromptOptimizer {
 
         for block in parsed.blocks {
             let normalizedTitle = normalizeHeading(block.title)
-            if normalizedTitle == target {
+            if (targetKey != nil && block.key == targetKey) || normalizedTitle == target {
                 let mergedBody = dedupePreservingOrder(cleanBodyLines(block.body) + lines)
                 rendered.append(renderSection(title: block.title, body: mergedBody))
                 mergedAny = true
@@ -1677,6 +1860,7 @@ enum HeuristicPromptOptimizer {
 
         let parsed = parseBlocks(from: text)
         let target = normalizeHeading(title)
+        let targetKey = sectionKey(for: title)
         var rendered: [String] = []
         var replaced = false
 
@@ -1689,7 +1873,7 @@ enum HeuristicPromptOptimizer {
 
         for block in parsed.blocks {
             let normalizedTitle = normalizeHeading(block.title)
-            if normalizedTitle == target {
+            if (targetKey != nil && block.key == targetKey) || normalizedTitle == target {
                 rendered.append(renderSection(title: block.title, body: cleanedBody))
                 replaced = true
             } else {
@@ -1814,6 +1998,33 @@ enum HeuristicPromptOptimizer {
         }
     }
 
+    private static func hasWeakRequirements(in text: String) -> Bool {
+        let parsed = parseBlocks(from: text)
+        guard let requirementsBlock = parsed.blocks.first(where: { $0.key == .requirements }) else {
+            return false
+        }
+
+        let lines = cleanBodyLines(requirementsBlock.body)
+        let bulletCount = lines.reduce(into: 0) { count, line in
+            if RegexBank.leadingBullet.firstMatch(
+                in: line,
+                options: [],
+                range: NSRange(line.startIndex..<line.endIndex, in: line)
+            ) != nil {
+                count += 1
+            }
+        }
+
+        if bulletCount < 3 {
+            return true
+        }
+
+        return lines.allSatisfy { line in
+            let lowered = line.lowercased()
+            return lowered.contains("requirements") || lowered.contains("requested artifact")
+        }
+    }
+
     private static func normalizeDeliverableForComparison(_ value: String) -> String {
         let strippedBullet = RegexBank.leadingBullet.stringByReplacingMatches(
             in: value,
@@ -1828,21 +2039,33 @@ enum HeuristicPromptOptimizer {
 
     private static func inferIntent(from text: String) -> PromptIntent {
         let lowered = text.lowercased()
-        let hasStoryCue = ["story", "narrative", "short story", "plot", "character arc"].contains(where: lowered.contains)
+        let tokens = tokenSet(from: lowered)
+        let hasStoryCue =
+            ["story", "narrative", "plot"].contains(where: tokens.contains) ||
+            lowered.contains("short story") ||
+            lowered.contains("character arc")
         if hasStoryCue {
             return .creativeStory
         }
 
-        let hasGameCue = ["tic-tac-toe", "board game", "game rules", "gameplay", "x's", "o's", "chess"].contains(where: lowered.contains)
-        if hasGameCue && ["design", "spec", "mechanic", "rules"].contains(where: lowered.contains) {
+        let hasGameCue =
+            lowered.contains("tic-tac-toe") ||
+            lowered.contains("board game") ||
+            lowered.contains("game rules") ||
+            lowered.contains("x's") ||
+            lowered.contains("o's") ||
+            ["gameplay", "chess", "game"].contains(where: tokens.contains)
+        if hasGameCue && ["design", "spec", "mechanic", "rules", "rule"].contains(where: tokens.contains) {
             return .gameDesign
         }
 
-        let hasSoftwareCue = [
+        let softwareCueWords = [
             "build", "implement", "refactor", "fix", "patch", "test", "app", "api", "function", "class", "script",
-            "repository", "file", "code", "swift", "python", "javascript", "react", "cli", "game"
+            "repository", "file", "code", "swift", "python", "javascript", "react", "cli", "game", "website"
         ]
-        .contains(where: lowered.contains)
+        let hasSoftwareCue = softwareCueWords.contains(where: tokens.contains) ||
+            lowered.contains("source code") ||
+            lowered.contains("codebase")
         if hasSoftwareCue {
             return .softwareBuild
         }
@@ -1850,11 +2073,16 @@ enum HeuristicPromptOptimizer {
         return .general
     }
 
+    private static func tokenSet(from text: String) -> Set<String> {
+        let parts = text.components(separatedBy: CharacterSet.alphanumerics.inverted)
+        return Set(parts.filter { !$0.isEmpty })
+    }
+
     private static func shouldInsertQuestions(for intent: PromptIntent) -> Bool {
         switch intent {
-        case .creativeStory, .gameDesign:
+        case .creativeStory, .gameDesign, .softwareBuild:
             return false
-        case .softwareBuild, .general:
+        case .general:
             return true
         }
     }
@@ -1864,7 +2092,14 @@ enum HeuristicPromptOptimizer {
         context: HeuristicOptimizationContext,
         intent: PromptIntent
     ) -> Bool {
-        guard intent == .creativeStory || intent == .gameDesign else { return false }
+        switch intent {
+        case .creativeStory, .gameDesign:
+            break
+        case .softwareBuild:
+            guard context.scenario == .generalAssistant || context.scenario == .ideCodingAssistant else { return false }
+        case .general:
+            return false
+        }
         let parsed = parseBlocks(from: text)
         guard let block = parsed.blocks.first(where: { $0.key == .outputFormat }) else { return false }
 
@@ -1887,7 +2122,19 @@ enum HeuristicPromptOptimizer {
             signature = "title, story"
         case .gameDesign:
             signature = "concept, rules, visual theme"
-        case .softwareBuild, .general:
+        case .softwareBuild:
+            let acceptableCues = [
+                "goal, requirements, constraints, deliverables, validation",
+                "goal, plan, deliverables, validation",
+                "plan, patch summary, validation",
+                "plan, unified diff, tests, validation commands"
+            ]
+            if acceptableCues.contains(where: current.contains) {
+                return false
+            }
+            // For software tasks, preserve explicit non-generic formats even if they differ from our preferred signature.
+            return false
+        case .general:
             return false
         }
 
@@ -1911,7 +2158,38 @@ enum HeuristicPromptOptimizer {
                 "Specify how \(theme) are represented across the board and turns.",
                 "Provide two example game states plus one edge-case rule clarification."
             ]
-        case .softwareBuild, .general:
+        case .softwareBuild:
+            let lowered = sourceText.lowercased()
+            if lowered.contains("platformer") {
+                return [
+                    "Define player controls, movement physics, and progression goals for the 2D platformer.",
+                    "Specify level layout, enemy/obstacle behavior, and completion/failure conditions.",
+                    "Describe SNES-style visual/audio direction and dog protagonist asset requirements."
+                ]
+            }
+
+            if lowered.contains("chess") {
+                return [
+                    "Define board state and legal move logic for all chess pieces.",
+                    "Specify check/checkmate/stalemate handling and illegal move responses.",
+                    "Provide deterministic validation scenarios for move legality and game-end states."
+                ]
+            }
+
+            if lowered.contains("animation") || lowered.contains("website") || lowered.contains("ui") {
+                return [
+                    "List targeted screens/components and the intended animation outcome for each.",
+                    "Define deterministic animation specs (duration, easing, triggers, reduced-motion fallback).",
+                    "Provide validation checks for visual correctness, accessibility, and interaction stability."
+                ]
+            }
+
+            return [
+                "Define concrete functional requirements and expected user-visible behavior.",
+                "Specify implementation boundaries and explicit out-of-scope items.",
+                "Provide deterministic validation checks tied to each requirement."
+            ]
+        case .general:
             return nil
         }
     }
@@ -1975,7 +2253,13 @@ enum HeuristicPromptOptimizer {
     }
 
     private static func containsHedgingLexicon(in text: String) -> Bool {
-        let lowered = text.lowercased()
+        let lowered = PromptTextGuards.splitByCodeFences(text).compactMap { segment -> String? in
+            if case let .text(value) = segment {
+                return value.lowercased()
+            }
+            return nil
+        }
+        .joined(separator: "\n")
         let needles = ["maybe", "if possible", "try to", "possibly", "ideally", "might", "best effort", "etc"]
         return needles.contains(where: lowered.contains)
     }

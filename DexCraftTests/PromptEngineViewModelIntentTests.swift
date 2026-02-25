@@ -37,6 +37,38 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.localizedCaseInsensitiveContains("ordered implementation steps"))
     }
 
+    func testForgePromptSoftwareBuildUsesRequirementDrivenContract() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Create a 2D Super Nintendo style platformer, starring a dog."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("goal, requirements, constraints, deliverables, validation"))
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("deterministic check"))
+        XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
+    }
+
+    func testForgePromptIDEAvoidsGenericContractAndDuplicateDeliverableSets() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .ideCodingAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Add a bunch of new flashy animations to this website so that it feels more lively."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("goal, plan, deliverables, validation"))
+        XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
+        XCTAssertFalse(output.localizedCaseInsensitiveContains("plan with deterministic ordered steps"))
+    }
+
     private func makeViewModel() -> (PromptEngineViewModel, () -> Void) {
         let folderName = "DexCraft-IntentTests-\(UUID().uuidString)"
         let storageManager = StorageManager(appFolderName: folderName)

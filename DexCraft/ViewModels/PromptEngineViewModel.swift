@@ -1045,21 +1045,35 @@ final class PromptEngineViewModel: ObservableObject {
         var lines: [String]
 
         if target != .agenticIDE {
-            switch intent {
-            case .creativeStory:
+            if selectedScenarioProfile == .ideCodingAssistant {
                 lines = [
-                    "Use sections in this order: Title, Story.",
-                    "Story should include a clear beginning, middle, and ending.",
-                    "Keep narrative voice, tense, and point of view consistent."
+                    "Use sections in this order: Goal, Plan, Deliverables, Validation.",
+                    "Plan must name concrete UI/behavior changes and affected files/components.",
+                    "Validation must include deterministic checks for each major change."
                 ]
-            case .gameDesign:
-                lines = [
-                    "Use sections in this order: Concept, Rules, Visual Theme, Interaction Flow.",
-                    "Define deterministic turn order and win/draw conditions.",
-                    "Explain how thematic marks map to board state."
-                ]
-            case .softwareBuild, .general:
-                lines = []
+            } else {
+                switch intent {
+                case .creativeStory:
+                    lines = [
+                        "Use sections in this order: Title, Story.",
+                        "Story should include a clear beginning, middle, and ending.",
+                        "Keep narrative voice, tense, and point of view consistent."
+                    ]
+                case .gameDesign:
+                    lines = [
+                        "Use sections in this order: Concept, Rules, Visual Theme, Interaction Flow.",
+                        "Define deterministic turn order and win/draw conditions.",
+                        "Explain how thematic marks map to board state."
+                    ]
+                case .softwareBuild:
+                    lines = [
+                        "Use sections in this order: Goal, Requirements, Constraints, Deliverables, Validation.",
+                        "Requirements must state concrete behavior and user-visible outcomes.",
+                        "Validation must map each requirement to a deterministic check."
+                    ]
+                case .general:
+                    lines = []
+                }
             }
 
             if !lines.isEmpty {
@@ -1124,21 +1138,27 @@ final class PromptEngineViewModel: ObservableObject {
 
     private func inferPromptIntent(from text: String) -> PromptIntent {
         let lowered = text.lowercased()
+        let tokens = Set(lowered.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
 
-        if ["story", "narrative", "short story", "plot"].contains(where: lowered.contains) {
+        if ["story", "narrative", "plot"].contains(where: tokens.contains) || lowered.contains("short story") {
             return .creativeStory
         }
 
-        let gameTerms = ["tic-tac-toe", "board game", "gameplay", "x's", "o's", "chess"]
-        if gameTerms.contains(where: lowered.contains) && ["design", "rules", "mechanic", "theme"].contains(where: lowered.contains) {
+        let hasGameTerm =
+            lowered.contains("tic-tac-toe") ||
+            lowered.contains("board game") ||
+            lowered.contains("x's") ||
+            lowered.contains("o's") ||
+            ["gameplay", "chess", "game"].contains(where: tokens.contains)
+        if hasGameTerm && ["design", "rules", "rule", "mechanic", "theme"].contains(where: tokens.contains) {
             return .gameDesign
         }
 
         if [
             "build", "implement", "refactor", "fix", "patch", "test", "code", "repository", "file", "api", "app",
-            "swift", "python", "javascript", "cli", "script"
+            "swift", "python", "javascript", "cli", "script", "website", "game"
         ]
-        .contains(where: lowered.contains) {
+        .contains(where: tokens.contains) || lowered.contains("codebase") || lowered.contains("source code") {
             return .softwareBuild
         }
 
@@ -1160,7 +1180,20 @@ final class PromptEngineViewModel: ObservableObject {
                 "Specify exactly how the thematic marks map to board symbols and turns.",
                 "Provide at least one example play sequence and one edge-case rule."
             ]
-        case .softwareBuild, .general:
+        case .softwareBuild:
+            if selectedScenarioProfile == .ideCodingAssistant {
+                return [
+                    "Define the concrete animation goals and impacted screens/components.",
+                    "Specify an ordered implementation plan with deterministic patch scope.",
+                    "Provide validation steps that confirm behavior and guard regressions."
+                ]
+            }
+            return [
+                "Define the core functional requirements and expected user-visible behavior.",
+                "Specify implementation constraints and explicit out-of-scope boundaries.",
+                "Provide deterministic validation checks for each major requirement."
+            ]
+        case .general:
             return []
         }
     }
