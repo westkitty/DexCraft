@@ -395,7 +395,10 @@ final class PromptEngineViewModel: ObservableObject {
             )
         }
 
-        let baselinePrompt = compiledFinalPrompt
+        let baselinePrompt = shouldUseRawBaselineForHeuristicOptimization(
+            rawInput: resolvedInput,
+            compiledPrompt: compiledFinalPrompt
+        ) ? resolvedInput.trimmingCharacters(in: .whitespacesAndNewlines) : compiledFinalPrompt
         var selectedFinalPrompt = baselinePrompt
         var heuristicResult: HeuristicOptimizationResult?
 
@@ -855,6 +858,37 @@ final class PromptEngineViewModel: ObservableObject {
         let mode = resolveRewriteMode(autoOptimize: autoOptimizePrompt, options: options)
         let ir = parseRawInputToIR(rawInput: input, target: selectedTarget, mode: mode, options: options)
         return compileFinalPrompt(from: ir)
+    }
+
+    private func shouldUseRawBaselineForHeuristicOptimization(rawInput: String, compiledPrompt: String) -> Bool {
+        guard autoOptimizePrompt else { return false }
+        guard selectedTarget != .agenticIDE else { return false }
+        guard selectedScenarioProfile == .generalAssistant || selectedScenarioProfile == .longformWriting else { return false }
+
+        let trimmedRaw = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCompiled = compiledPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRaw.isEmpty, !trimmedCompiled.isEmpty else { return false }
+
+        let parsed = parseInputSections(from: trimmedRaw)
+        let hasExplicitStructuredSections =
+            !parsed.goal.isEmpty ||
+            !parsed.context.isEmpty ||
+            !parsed.constraints.isEmpty ||
+            !parsed.deliverables.isEmpty
+
+        if hasExplicitStructuredSections {
+            return false
+        }
+
+        let lowered = trimmedRaw.lowercased()
+        let asksForStrictStructure =
+            lowered.contains("output format") ||
+            lowered.contains("output contract") ||
+            lowered.contains("use sections") ||
+            lowered.contains("markdown headings") ||
+            lowered.contains("json")
+
+        return !asksForStrictStructure
     }
 
     private func resolveRewriteMode(autoOptimize: Bool, options: EnhancementOptions) -> RewriteMode {

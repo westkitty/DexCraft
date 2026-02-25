@@ -75,28 +75,51 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         """))
     }
 
-    func testGapDrivenWeakPromptGetsMissingSectionsInserted() {
+    func testGapDrivenWeakPromptGetsSemanticUpgradeWithoutTemplateScaffold() {
         let result = HeuristicPromptOptimizer.optimize(
             "Improve this maybe",
             context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
         )
 
-        XCTAssertTrue(result.optimizedText.contains("### Deliverables"))
-        XCTAssertTrue(result.optimizedText.contains("### Output Format"))
-        XCTAssertTrue(result.optimizedText.contains("### Success Criteria"))
-        XCTAssertTrue(result.optimizedText.contains("### Questions"))
+        XCTAssertNotEqual(result.optimizedText, "Improve this maybe")
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("deterministic"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("completion checks"))
+        XCTAssertFalse(result.optimizedText.contains("### Output Format"))
+        XCTAssertFalse(result.optimizedText.contains("### Deliverables"))
     }
 
-    func testUnderspecifiedBuildTaskGetsStructuralExpansion() {
+    func testUnderspecifiedBuildTaskGetsSemanticExpansion() {
         let result = HeuristicPromptOptimizer.optimize(
             "Build me a chess game.",
             context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
         )
 
-        XCTAssertTrue(result.optimizedText.contains("### Constraints"))
-        XCTAssertTrue(result.optimizedText.contains("### Output Format"))
-        XCTAssertTrue(result.optimizedText.contains("### Success Criteria"))
-        XCTAssertTrue(result.optimizedText.contains("### Deliverables"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("legal move"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("checkmate"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("deterministic validation"))
+        XCTAssertFalse(result.optimizedText.contains("### Output Format"))
+    }
+
+    func testImageEditPromptGetsConcreteSemanticRewriteWithoutScaffold() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Edit the image so that the dog is wearing a hat.",
+            context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
+        )
+
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("preserve subject identity"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("occlusion"))
+        XCTAssertFalse(result.optimizedText.contains("### Output Contract"))
+    }
+
+    func testDogFoodPromptGetsConcreteProductConstraintsWithoutScaffold() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Design a new kind of dog food using only bananas.",
+            context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
+        )
+
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("nutritional constraints"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("deterministic evaluation criteria"))
+        XCTAssertFalse(result.optimizedText.contains("### Deliverables"))
     }
 
     func testCreativeStoryPromptUpgradesGenericContractAndDeliverables() {
@@ -265,13 +288,11 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         XCTAssertTrue(result.optimizedText.contains("echo \"maybe keep this exact\""))
     }
 
-    func testDomainPacksByScenarioInjectExpectedPolicies() {
+    func testStructuredScenariosStillInjectExpectedDomainPolicies() {
         let expectations: [(ScenarioProfile, String)] = [
-            (.generalAssistant, "deterministic"),
             (.ideCodingAssistant, "Unified Diff"),
             (.cliAssistant, "shell commands only"),
             (.jsonStructuredOutput, "Return JSON only"),
-            (.longformWriting, "narrative continuity"),
             (.researchSummarization, "Citations"),
             (.toolUsingAgent, "Tool Calls")
         ]
@@ -288,6 +309,16 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         }
     }
 
+    func testGeneralAssistantPrefersSemanticRewriteOverDomainPackScaffold() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "improve this maybe",
+            context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
+        )
+
+        XCTAssertFalse(result.optimizedText.contains("### Goal"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("deterministic"))
+    }
+
     func testDomainPacksByTargetInjectExpectedPolicies() {
         let expectations: [(PromptTarget, [String])] = [
             (.claude, ["### Goal"]),
@@ -299,7 +330,7 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         for (target, needles) in expectations {
             let result = HeuristicPromptOptimizer.optimize(
                 "improve this maybe",
-                context: HeuristicOptimizationContext(target: target, scenario: .generalAssistant)
+                context: HeuristicOptimizationContext(target: target, scenario: .toolUsingAgent)
             )
             for needle in needles {
                 XCTAssertTrue(

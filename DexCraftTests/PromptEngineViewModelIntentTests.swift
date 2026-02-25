@@ -13,8 +13,10 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         viewModel.forgePrompt()
 
         let output = viewModel.generatedPrompt
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("title, story"))
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("complete short story"))
         XCTAssertTrue(output.localizedCaseInsensitiveContains("beginning, middle, and ending"))
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("narrative voice"))
+        XCTAssertFalse(output.contains("### Output Contract"))
         XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
         XCTAssertFalse(output.localizedCaseInsensitiveContains("ordered implementation steps"))
     }
@@ -30,9 +32,10 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         viewModel.forgePrompt()
 
         let output = viewModel.generatedPrompt
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("concept, rules, visual theme"))
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("win/draw"))
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("objective, setup, turn order"))
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("deterministic win/draw"))
         XCTAssertTrue(output.localizedCaseInsensitiveContains("cats and dogs"))
+        XCTAssertFalse(output.contains("### Output Format"))
         XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
         XCTAssertFalse(output.localizedCaseInsensitiveContains("ordered implementation steps"))
     }
@@ -48,8 +51,9 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         viewModel.forgePrompt()
 
         let output = viewModel.generatedPrompt
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("goal, requirements, constraints, deliverables, validation"))
-        XCTAssertTrue(output.localizedCaseInsensitiveContains("deterministic check"))
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("movement, physics"))
+        XCTAssertTrue(output.localizedCaseInsensitiveContains("deterministic test scenarios"))
+        XCTAssertFalse(output.contains("### Output Format"))
         XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
     }
 

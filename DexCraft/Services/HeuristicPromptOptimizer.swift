@@ -113,6 +113,7 @@ enum HeuristicPromptOptimizer {
         case canonicalize = "Canonicalize headings/order"
         case contradictionRepair = "Repair contradictions"
         case sentenceRewrite = "Sentence-level rewrite"
+        case semanticExpansion = "Semantic rewrite expansion"
         case requirementsInference = "Infer requirements"
         case deliverablesInference = "Infer deliverables"
         case outputFormat = "Add output format"
@@ -164,6 +165,7 @@ enum HeuristicPromptOptimizer {
         let needsCanonicalization: Bool
         let needsContradictionRepair: Bool
         let needsSentenceRewrite: Bool
+        let needsSemanticExpansion: Bool
         let needsRequirements: Bool
         let needsDeliverables: Bool
         let needsOutputFormat: Bool
@@ -178,6 +180,7 @@ enum HeuristicPromptOptimizer {
             needsCanonicalization ||
                 needsContradictionRepair ||
                 needsSentenceRewrite ||
+                needsSemanticExpansion ||
                 needsRequirements ||
                 needsDeliverables ||
                 needsOutputFormat ||
@@ -339,6 +342,11 @@ enum HeuristicPromptOptimizer {
 
         let baselineAnalysis = PromptHeuristics.analyze(input, originalCodeFenceBlocks: originalFenceCount)
         let domainPolicy = domainPolicy(for: context)
+        let preferSemanticRewrite = shouldPreferSemanticRewrite(
+            input: input,
+            analysis: baselineAnalysis,
+            context: context
+        )
         let baselineKnownSectionCount = parseBlocks(from: input).blocks.reduce(into: 0) { count, block in
             if block.key != nil { count += 1 }
         }
@@ -347,7 +355,13 @@ enum HeuristicPromptOptimizer {
             analysis: baselineAnalysis,
             knownSectionCount: baselineKnownSectionCount
         )
-        let gaps = detectGaps(input: input, analysis: baselineAnalysis, context: context, policy: domainPolicy)
+        let gaps = detectGaps(
+            input: input,
+            analysis: baselineAnalysis,
+            context: context,
+            policy: domainPolicy,
+            preferSemanticRewrite: preferSemanticRewrite
+        )
 
         if !gaps.hasAnyGap {
             let baselineScore = scoreCandidate(
@@ -356,7 +370,8 @@ enum HeuristicPromptOptimizer {
                 underspecifiedHint: baselineUnderspecified,
                 weights: weights,
                 context: context,
-                policy: domainPolicy
+                policy: domainPolicy,
+                preferSemanticRewrite: preferSemanticRewrite
             )
             let result = HeuristicOptimizationResult(
                 optimizedText: input,
@@ -404,7 +419,8 @@ enum HeuristicPromptOptimizer {
                 underspecifiedHint: baselineUnderspecified,
                 weights: weights,
                 context: context,
-                policy: domainPolicy
+                policy: domainPolicy,
+                preferSemanticRewrite: preferSemanticRewrite
             )
             scored.append((candidate, score, analysis))
         }
@@ -438,7 +454,8 @@ enum HeuristicPromptOptimizer {
             candidateText: selected.candidate.text,
             candidate: selected.analysis,
             context: context,
-            policy: domainPolicy
+            policy: domainPolicy,
+            preferSemanticRewrite: preferSemanticRewrite
         )
 
         if !shouldPromote(best: selected, baseline: baselineScored, delta: delta) {
@@ -532,7 +549,8 @@ enum HeuristicPromptOptimizer {
         input: String,
         analysis: PromptAnalysis,
         context: HeuristicOptimizationContext,
-        policy: DomainPolicy
+        policy: DomainPolicy,
+        preferSemanticRewrite: Bool
     ) -> GapProfile {
         let intent = inferIntent(from: input)
         let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
@@ -549,12 +567,25 @@ enum HeuristicPromptOptimizer {
         let weakDeliverables = hasWeakDeliverables(in: input)
         let weakRequirements = hasWeakRequirements(in: input)
         let hasKnownHeadings = parsedBlocks.contains(where: { $0.key != nil })
-        let needsCanonicalization = hasKnownHeadings && !isLikelyCanonicalOrder(input)
+        let structuredScaffolding = shouldUseStructuredScaffolding(
+            input: input,
+            context: context,
+            intent: intent,
+            hasKnownHeadings: hasKnownHeadings,
+            preferSemanticRewrite: preferSemanticRewrite
+        )
+        let needsCanonicalization = structuredScaffolding && hasKnownHeadings && !isLikelyCanonicalOrder(input)
         let needsSentenceRewrite = analysis.ambiguityCount > 0 || containsHedgingLexicon(in: input)
         let needsDedupe = hasDuplicateNormalizedLines(in: input)
+        let needsSemanticExpansion = preferSemanticRewrite &&
+            analysis.contradictions.isEmpty &&
+            !hasKnownHeadings &&
+            (intent != .general || ambiguous || underspecified)
 
-        let domainMissing = !policy.requiredKeywords.isEmpty && !containsAllKeywords(policy.requiredKeywords, in: input)
-        let missingGateSection = policy.requiredSectionsForAmbiguity.contains { key in
+        let domainMissing = structuredScaffolding &&
+            !policy.requiredKeywords.isEmpty &&
+            !containsAllKeywords(policy.requiredKeywords, in: input)
+        let missingGateSection = structuredScaffolding && policy.requiredSectionsForAmbiguity.contains { key in
             !containsHeading(key.headingTitle, in: input)
         }
         let outputNeedsUpgrade = needsOutputFormatUpgrade(in: input, context: context, intent: intent)
@@ -564,17 +595,19 @@ enum HeuristicPromptOptimizer {
             needsCanonicalization: needsCanonicalization,
             needsContradictionRepair: !analysis.contradictions.isEmpty,
             needsSentenceRewrite: needsSentenceRewrite,
-            needsRequirements: isSoftwareIntent &&
+            needsSemanticExpansion: needsSemanticExpansion,
+            needsRequirements: structuredScaffolding &&
+                isSoftwareIntent &&
                 (
                     weakRequirements ||
                     ((underspecified || outputNeedsUpgrade || analysis.ambiguityCount > 0 || analysis.isVagueGoal) &&
                         !containsHeading("Requirements", in: input))
                 ),
-            needsDeliverables: !analysis.hasEnumeratedDeliverables || weakDeliverables,
-            needsOutputFormat: !(analysis.hasOutputFormatHeading || analysis.hasOutputTemplate) || outputNeedsUpgrade,
-            needsSuccessCriteria: (analysis.ambiguityCount > 0 || analysis.isVagueGoal || underspecified) && !analysis.hasSuccessCriteriaHeading,
-            needsScopeBounds: analysis.scopeLeak && !analysis.hasScopeBounds,
-            needsQuestions: shouldAskQuestions && (ambiguous || underspecified) && !analysis.hasQuestionsHeading,
+            needsDeliverables: structuredScaffolding && (!analysis.hasEnumeratedDeliverables || weakDeliverables),
+            needsOutputFormat: structuredScaffolding && (!(analysis.hasOutputFormatHeading || analysis.hasOutputTemplate) || outputNeedsUpgrade),
+            needsSuccessCriteria: structuredScaffolding && (analysis.ambiguityCount > 0 || analysis.isVagueGoal || underspecified) && !analysis.hasSuccessCriteriaHeading,
+            needsScopeBounds: structuredScaffolding && analysis.scopeLeak && !analysis.hasScopeBounds,
+            needsQuestions: structuredScaffolding && shouldAskQuestions && (ambiguous || underspecified) && !analysis.hasQuestionsHeading,
             needsDomainPack: domainMissing,
             needsQualityGate: (ambiguous || underspecified) && missingGateSection,
             needsDedupe: needsDedupe
@@ -586,6 +619,7 @@ enum HeuristicPromptOptimizer {
 
         if gaps.needsContradictionRepair { ordered.append(.contradictionRepair) }
         if gaps.needsSentenceRewrite { ordered.append(.sentenceRewrite) }
+        if gaps.needsSemanticExpansion { ordered.append(.semanticExpansion) }
         if gaps.needsCanonicalization { ordered.append(.canonicalize) }
         if gaps.needsRequirements { ordered.append(.requirementsInference) }
         if gaps.needsDeliverables { ordered.append(.deliverablesInference) }
@@ -600,7 +634,7 @@ enum HeuristicPromptOptimizer {
         var plans: [[TransformKey]] = ordered.map { [$0] }
 
         let structuralBundle = ordered.filter {
-            [.contradictionRepair, .sentenceRewrite, .requirementsInference, .deliverablesInference, .outputFormat, .scopeBounds, .questions, .successCriteria, .domainPack, .qualityGate, .dedupe].contains($0)
+            [.contradictionRepair, .sentenceRewrite, .semanticExpansion, .requirementsInference, .deliverablesInference, .outputFormat, .scopeBounds, .questions, .successCriteria, .domainPack, .qualityGate, .dedupe].contains($0)
         }
 
         if !structuralBundle.isEmpty {
@@ -644,6 +678,8 @@ enum HeuristicPromptOptimizer {
                 text = contradictionRepairCandidate(text)
             case .sentenceRewrite:
                 text = sentenceRewriteCandidate(text)
+            case .semanticExpansion:
+                text = semanticExpansionCandidate(text, context: context)
             case .requirementsInference:
                 text = requirementsCandidate(text, context: context)
             case .deliverablesInference:
@@ -674,119 +710,142 @@ enum HeuristicPromptOptimizer {
         underspecifiedHint: Bool,
         weights: HeuristicScoringWeights,
         context: HeuristicOptimizationContext,
-        policy: DomainPolicy
+        policy: DomainPolicy,
+        preferSemanticRewrite: Bool
     ) -> ScoreResult {
         var score = 0
         var breakdown: [String: Int] = [:]
         var warnings: [String] = []
         let underspecified = underspecifiedHint
         let intent = inferIntent(from: text)
-
-        if analysis.hasOutputFormatHeading || analysis.hasOutputTemplate {
-            score += weights.outputFormat
-            breakdown["output_format"] = weights.outputFormat
-        } else {
-            let penalty = -max(4, weights.outputFormat / 2)
-            score += penalty
-            breakdown["missing_output_format"] = penalty
-        }
-
-        if intent == .creativeStory || intent == .gameDesign {
-            if needsOutputFormatUpgrade(in: text, context: context, intent: intent) {
-                let penalty = -max(3, weights.outputFormat / 3)
-                score += penalty
-                breakdown["generic_output_contract_for_creative"] = penalty
-            } else {
-                score += 3
-                breakdown["creative_output_contract"] = 3
-            }
-        }
-
-        if intent == .softwareBuild && needsOutputFormatUpgrade(in: text, context: context, intent: intent) {
-            let penalty = -max(6, weights.outputFormat / 3)
-            score += penalty
-            breakdown["generic_output_contract_for_software"] = penalty
-        }
-
-        if intent == .softwareBuild {
-            let requiresRequirementsSection =
-                underspecified ||
-                analysis.ambiguityCount > 0 ||
-                analysis.isVagueGoal ||
-                needsOutputFormatUpgrade(in: text, context: context, intent: intent)
-
-            if requiresRequirementsSection {
-                if containsHeading("Requirements", in: text) {
-                    let bonus = 12
-                    score += bonus
-                    breakdown["requirements_present"] = bonus
-                } else {
-                    let penalty = -8
-                    score += penalty
-                    breakdown["missing_requirements"] = penalty
-                }
-            } else if containsHeading("Requirements", in: text) {
-                score += 2
-                breakdown["requirements_optional_bonus"] = 2
-            }
-
-            if hasWeakRequirements(in: text) {
-                let penalty = -6
-                score += penalty
-                breakdown["weak_requirements"] = penalty
-            }
-        }
-
-        if analysis.hasEnumeratedDeliverables {
-            score += weights.deliverables
-            breakdown["enumerated_deliverables"] = weights.deliverables
-        } else {
-            let penalty = -max(4, weights.deliverables / 2)
-            score += penalty
-            breakdown["missing_deliverables"] = penalty
-        }
-
-        if hasWeakDeliverables(in: text) {
-            let penalty = -max(4, weights.deliverables / 3)
-            score += penalty
-            breakdown["weak_deliverables"] = penalty
-        }
-
-        if analysis.hasConstraintsHeading && analysis.hasStrongConstraintMarkers {
-            score += weights.constraints
-            breakdown["strong_constraints"] = weights.constraints
-        }
-
         let ambiguous = analysis.ambiguityCount >= 2 || analysis.isVagueGoal
-        if (ambiguous || underspecified) && analysis.hasSuccessCriteriaHeading {
-            score += weights.successCriteria
-            breakdown["success_criteria_for_ambiguity"] = weights.successCriteria
-        } else if ambiguous {
-            let penalty = -max(2, weights.successCriteria / 3)
-            score += penalty
-            breakdown["missing_success_criteria_ambiguous"] = penalty
-        } else if underspecified {
-            let penalty = -max(3, weights.successCriteria / 2)
-            score += penalty
-            breakdown["missing_success_criteria_underspecified"] = penalty
-        }
+        if preferSemanticRewrite {
+            let knownSectionCount = parseBlocks(from: text).blocks.reduce(into: 0) { count, block in
+                if block.key != nil { count += 1 }
+            }
+            if knownSectionCount > 0 {
+                let penalty = -min(18, knownSectionCount * 4)
+                score += penalty
+                breakdown["section_bloat_penalty"] = penalty
+            }
 
-        if analysis.scopeLeak && analysis.hasScopeBounds {
-            score += weights.scopeBounds
-            breakdown["scope_bounded"] = weights.scopeBounds
-        }
+            let specificity = semanticSpecificityScore(in: text, intent: intent)
+            let specificityBonus = specificity * 4
+            if specificityBonus > 0 {
+                score += specificityBonus
+                breakdown["semantic_specificity"] = specificityBonus
+            }
 
-        if (ambiguous || underspecified) && analysis.hasQuestionsHeading {
-            score += weights.questions
-            breakdown["questions_for_ambiguity"] = weights.questions
-        } else if ambiguous && shouldInsertQuestions(for: intent) {
-            let penalty = -max(2, max(1, weights.questions / 2))
-            score += penalty
-            breakdown["missing_questions_ambiguous"] = penalty
-        } else if underspecified && shouldInsertQuestions(for: intent) {
-            let penalty = -max(2, weights.questions / 2)
-            score += penalty
-            breakdown["missing_questions_underspecified"] = penalty
+            if ambiguous && containsHeading("Questions", in: text) {
+                score -= 2
+                breakdown["avoid_unnecessary_questions"] = -2
+            }
+        } else {
+            if analysis.hasOutputFormatHeading || analysis.hasOutputTemplate {
+                score += weights.outputFormat
+                breakdown["output_format"] = weights.outputFormat
+            } else {
+                let penalty = -max(4, weights.outputFormat / 2)
+                score += penalty
+                breakdown["missing_output_format"] = penalty
+            }
+
+            if intent == .creativeStory || intent == .gameDesign {
+                if needsOutputFormatUpgrade(in: text, context: context, intent: intent) {
+                    let penalty = -max(3, weights.outputFormat / 3)
+                    score += penalty
+                    breakdown["generic_output_contract_for_creative"] = penalty
+                } else {
+                    score += 3
+                    breakdown["creative_output_contract"] = 3
+                }
+            }
+
+            if intent == .softwareBuild && needsOutputFormatUpgrade(in: text, context: context, intent: intent) {
+                let penalty = -max(6, weights.outputFormat / 3)
+                score += penalty
+                breakdown["generic_output_contract_for_software"] = penalty
+            }
+
+            if intent == .softwareBuild {
+                let requiresRequirementsSection =
+                    underspecified ||
+                    analysis.ambiguityCount > 0 ||
+                    analysis.isVagueGoal ||
+                    needsOutputFormatUpgrade(in: text, context: context, intent: intent)
+
+                if requiresRequirementsSection {
+                    if containsHeading("Requirements", in: text) {
+                        let bonus = 12
+                        score += bonus
+                        breakdown["requirements_present"] = bonus
+                    } else {
+                        let penalty = -8
+                        score += penalty
+                        breakdown["missing_requirements"] = penalty
+                    }
+                } else if containsHeading("Requirements", in: text) {
+                    score += 2
+                    breakdown["requirements_optional_bonus"] = 2
+                }
+
+                if hasWeakRequirements(in: text) {
+                    let penalty = -6
+                    score += penalty
+                    breakdown["weak_requirements"] = penalty
+                }
+            }
+
+            if analysis.hasEnumeratedDeliverables {
+                score += weights.deliverables
+                breakdown["enumerated_deliverables"] = weights.deliverables
+            } else {
+                let penalty = -max(4, weights.deliverables / 2)
+                score += penalty
+                breakdown["missing_deliverables"] = penalty
+            }
+
+            if hasWeakDeliverables(in: text) {
+                let penalty = -max(4, weights.deliverables / 3)
+                score += penalty
+                breakdown["weak_deliverables"] = penalty
+            }
+
+            if analysis.hasConstraintsHeading && analysis.hasStrongConstraintMarkers {
+                score += weights.constraints
+                breakdown["strong_constraints"] = weights.constraints
+            }
+
+            if (ambiguous || underspecified) && analysis.hasSuccessCriteriaHeading {
+                score += weights.successCriteria
+                breakdown["success_criteria_for_ambiguity"] = weights.successCriteria
+            } else if ambiguous {
+                let penalty = -max(2, weights.successCriteria / 3)
+                score += penalty
+                breakdown["missing_success_criteria_ambiguous"] = penalty
+            } else if underspecified {
+                let penalty = -max(3, weights.successCriteria / 2)
+                score += penalty
+                breakdown["missing_success_criteria_underspecified"] = penalty
+            }
+
+            if analysis.scopeLeak && analysis.hasScopeBounds {
+                score += weights.scopeBounds
+                breakdown["scope_bounded"] = weights.scopeBounds
+            }
+
+            if (ambiguous || underspecified) && analysis.hasQuestionsHeading {
+                score += weights.questions
+                breakdown["questions_for_ambiguity"] = weights.questions
+            } else if ambiguous && shouldInsertQuestions(for: intent) {
+                let penalty = -max(2, max(1, weights.questions / 2))
+                score += penalty
+                breakdown["missing_questions_ambiguous"] = penalty
+            } else if underspecified && shouldInsertQuestions(for: intent) {
+                let penalty = -max(2, weights.questions / 2)
+                score += penalty
+                breakdown["missing_questions_underspecified"] = penalty
+            }
         }
 
         if containsHedgingLexicon(in: text) {
@@ -800,12 +859,12 @@ enum HeuristicPromptOptimizer {
             breakdown["examples"] = exampleBonus
         }
 
-        if containsAllKeywords(policy.requiredKeywords, in: text) {
+        if !preferSemanticRewrite && containsAllKeywords(policy.requiredKeywords, in: text) {
             score += weights.domainPackBonus
             breakdown["domain_pack"] = weights.domainPackBonus
         }
 
-        if !policy.requiredSectionsForAmbiguity.contains(where: { !containsHeading($0.headingTitle, in: text) }) {
+        if !preferSemanticRewrite && !policy.requiredSectionsForAmbiguity.contains(where: { !containsHeading($0.headingTitle, in: text) }) {
             score += weights.qualityGateBonus
             breakdown["quality_gate"] = weights.qualityGateBonus
         }
@@ -843,7 +902,8 @@ enum HeuristicPromptOptimizer {
         candidateText: String,
         candidate: PromptAnalysis,
         context: HeuristicOptimizationContext,
-        policy: DomainPolicy
+        policy: DomainPolicy,
+        preferSemanticRewrite: Bool
     ) -> StructuralDelta {
         var gain = 0
         let baselineIntent = inferIntent(from: baselineText)
@@ -856,45 +916,63 @@ enum HeuristicPromptOptimizer {
             knownSectionCount: baselineKnownSectionCount
         )
 
-        if !(baseline.hasOutputFormatHeading || baseline.hasOutputTemplate) && (candidate.hasOutputFormatHeading || candidate.hasOutputTemplate) {
-            gain += 2
-        }
-        if (baselineIntent == .creativeStory || baselineIntent == .gameDesign || baselineIntent == .softwareBuild) {
-            let baselineNeedsUpgrade = needsOutputFormatUpgrade(in: baselineText, context: context, intent: baselineIntent)
-            let candidateNeedsUpgrade = needsOutputFormatUpgrade(in: candidateText, context: context, intent: baselineIntent)
-            if baselineNeedsUpgrade && !candidateNeedsUpgrade {
+        if preferSemanticRewrite {
+            let baselineSpecificity = semanticSpecificityScore(in: baselineText, intent: baselineIntent)
+            let candidateSpecificity = semanticSpecificityScore(in: candidateText, intent: baselineIntent)
+            if candidateSpecificity > baselineSpecificity {
+                gain += min(4, candidateSpecificity - baselineSpecificity)
+            }
+
+            let baselineSectionCount = parseBlocks(from: baselineText).blocks.reduce(into: 0) { count, block in
+                if block.key != nil { count += 1 }
+            }
+            let candidateSectionCount = parseBlocks(from: candidateText).blocks.reduce(into: 0) { count, block in
+                if block.key != nil { count += 1 }
+            }
+            if baselineSectionCount == 0 && candidateSectionCount > 0 {
+                gain -= min(3, candidateSectionCount)
+            }
+        } else {
+            if !(baseline.hasOutputFormatHeading || baseline.hasOutputTemplate) && (candidate.hasOutputFormatHeading || candidate.hasOutputTemplate) {
                 gain += 2
             }
-        }
+            if (baselineIntent == .creativeStory || baselineIntent == .gameDesign || baselineIntent == .softwareBuild) {
+                let baselineNeedsUpgrade = needsOutputFormatUpgrade(in: baselineText, context: context, intent: baselineIntent)
+                let candidateNeedsUpgrade = needsOutputFormatUpgrade(in: candidateText, context: context, intent: baselineIntent)
+                if baselineNeedsUpgrade && !candidateNeedsUpgrade {
+                    gain += 2
+                }
+            }
 
-        let baselineNeedsRequirements =
-            baselineIntent == .softwareBuild &&
-            (baselineUnderspecified ||
-                baseline.ambiguityCount > 0 ||
-                baseline.isVagueGoal ||
-                needsOutputFormatUpgrade(in: baselineText, context: context, intent: baselineIntent))
+            let baselineNeedsRequirements =
+                baselineIntent == .softwareBuild &&
+                (baselineUnderspecified ||
+                    baseline.ambiguityCount > 0 ||
+                    baseline.isVagueGoal ||
+                    needsOutputFormatUpgrade(in: baselineText, context: context, intent: baselineIntent))
 
-        if baselineNeedsRequirements &&
-            !containsHeading("Requirements", in: baselineText) &&
-            containsHeading("Requirements", in: candidateText) {
-            gain += 2
-        }
+            if baselineNeedsRequirements &&
+                !containsHeading("Requirements", in: baselineText) &&
+                containsHeading("Requirements", in: candidateText) {
+                gain += 2
+            }
 
-        if !baseline.hasEnumeratedDeliverables && candidate.hasEnumeratedDeliverables {
-            gain += 2
-        }
+            if !baseline.hasEnumeratedDeliverables && candidate.hasEnumeratedDeliverables {
+                gain += 2
+            }
 
-        if (baseline.ambiguityCount >= 2 || baseline.isVagueGoal || baselineUnderspecified) {
-            if !baseline.hasSuccessCriteriaHeading && candidate.hasSuccessCriteriaHeading {
+            if (baseline.ambiguityCount >= 2 || baseline.isVagueGoal || baselineUnderspecified) {
+                if !baseline.hasSuccessCriteriaHeading && candidate.hasSuccessCriteriaHeading {
+                    gain += 1
+                }
+                if !baseline.hasQuestionsHeading && candidate.hasQuestionsHeading {
+                    gain += 1
+                }
+            }
+
+            if baseline.scopeLeak && !baseline.hasScopeBounds && candidate.hasScopeBounds {
                 gain += 1
             }
-            if !baseline.hasQuestionsHeading && candidate.hasQuestionsHeading {
-                gain += 1
-            }
-        }
-
-        if baseline.scopeLeak && !baseline.hasScopeBounds && candidate.hasScopeBounds {
-            gain += 1
         }
 
         if !baseline.contradictions.isEmpty && candidate.contradictions.count < baseline.contradictions.count {
@@ -905,18 +983,22 @@ enum HeuristicPromptOptimizer {
             gain += 2
         }
 
-        if containsAllKeywords(policy.requiredKeywords, in: candidateText) && !containsAllKeywords(policy.requiredKeywords, in: baselineText) {
+        if !preferSemanticRewrite &&
+            containsAllKeywords(policy.requiredKeywords, in: candidateText) &&
+            !containsAllKeywords(policy.requiredKeywords, in: baselineText) {
             gain += 2
         }
 
-        let baselineMissingSections = policy.requiredSectionsForAmbiguity.reduce(into: 0) { count, key in
-            if !containsHeading(key.headingTitle, in: baselineText) { count += 1 }
-        }
-        let candidateMissingSections = policy.requiredSectionsForAmbiguity.reduce(into: 0) { count, key in
-            if !containsHeading(key.headingTitle, in: candidateText) { count += 1 }
-        }
-        if candidateMissingSections < baselineMissingSections {
-            gain += min(3, baselineMissingSections - candidateMissingSections)
+        if !preferSemanticRewrite {
+            let baselineMissingSections = policy.requiredSectionsForAmbiguity.reduce(into: 0) { count, key in
+                if !containsHeading(key.headingTitle, in: baselineText) { count += 1 }
+            }
+            let candidateMissingSections = policy.requiredSectionsForAmbiguity.reduce(into: 0) { count, key in
+                if !containsHeading(key.headingTitle, in: candidateText) { count += 1 }
+            }
+            if candidateMissingSections < baselineMissingSections {
+                gain += min(3, baselineMissingSections - candidateMissingSections)
+            }
         }
 
         let baseLength = max(1, baselineText.count)
@@ -1008,6 +1090,22 @@ enum HeuristicPromptOptimizer {
             let shielded = PromptHeuristics.shieldProtectedLiterals(in: text)
             let rewritten = rewriteSentences(in: shielded.shielded)
             return PromptHeuristics.restoreProtectedLiterals(in: rewritten, table: shielded.table)
+        }
+    }
+
+    private static func semanticExpansionCandidate(_ input: String, context: HeuristicOptimizationContext) -> String {
+        transformPreservingCodeFences(input) { text in
+            let analysis = PromptHeuristics.analyze(text, originalCodeFenceBlocks: 0)
+            guard shouldPreferSemanticRewrite(input: text, analysis: analysis, context: context) else { return text }
+
+            let parsed = parseBlocks(from: text)
+            if parsed.blocks.contains(where: { $0.key != nil }) {
+                return text
+            }
+
+            let shielded = PromptHeuristics.shieldProtectedLiterals(in: text)
+            let expanded = semanticExpansionText(from: shielded.shielded)
+            return PromptHeuristics.restoreProtectedLiterals(in: expanded, table: shielded.table)
         }
     }
 
@@ -2201,6 +2299,87 @@ enum HeuristicPromptOptimizer {
         }
     }
 
+    private static func semanticExpansionText(from sourceText: String) -> String {
+        let trimmed = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return sourceText }
+
+        let intent = inferIntent(from: trimmed)
+        let lowered = trimmed.lowercased()
+        switch intent {
+        case .creativeStory:
+            let subject = extractPhrase(regex: RegexBank.aboutSubject, in: trimmed) ?? "the requested subject"
+            return [
+                "Write one complete short story about \(subject).",
+                "Include a clear beginning, middle, and ending with a central conflict that is resolved in the final section.",
+                "Keep narrative voice, tense, and point of view consistent while using concrete sensory detail."
+            ].joined(separator: " ")
+        case .gameDesign:
+            let theme = extractPhrase(regex: RegexBank.whereTheme, in: trimmed) ?? "the thematic player marks"
+            return [
+                "Design the game with explicit objective, setup, turn order, legal move rules, and deterministic win/draw conditions.",
+                "Define how \(theme) map to board state and player turns in a consistent way.",
+                "Include at least one standard-play example and one edge-case rule clarification."
+            ].joined(separator: " ")
+        case .softwareBuild:
+            if lowered.contains("chess") {
+                return [
+                    "Build a complete chess game specification and implementation brief.",
+                    "Define board representation, legal move logic for each piece, turn/state transitions, captures, and check/checkmate/stalemate handling.",
+                    "Include deterministic validation scenarios for opening moves, captures, illegal moves, and game-ending states."
+                ].joined(separator: " ")
+            }
+            if lowered.contains("platformer") {
+                return [
+                    "Build a 2D platformer with concrete requirements for movement, physics, camera behavior, level flow, and completion/failure conditions.",
+                    "Specify enemy/obstacle behavior, checkpoint rules, and user-visible feedback for health/progress.",
+                    "Define deterministic test scenarios for controls, collisions, progression, and edge cases."
+                ].joined(separator: " ")
+            }
+            return [
+                "Translate the request into concrete functional requirements with explicit inputs, outputs, and user-visible behavior.",
+                "Define implementation constraints and out-of-scope boundaries to prevent scope creep.",
+                "Require deterministic validation checks tied directly to each major requirement."
+            ].joined(separator: " ")
+        case .general:
+            if isImageEditingRequest(lowered) {
+                return [
+                    "Edit the provided image so the requested change is clearly visible in the final output.",
+                    "Preserve subject identity, pose, lighting, perspective, and background continuity while integrating the new element naturally.",
+                    "Keep artifact-free edges and realistic occlusion/shadows, then return only the final edited result."
+                ].joined(separator: " ")
+            }
+
+            if lowered.contains("dog food") || lowered.contains("recipe") {
+                return [
+                    "Design a complete dog-food concept using only the specified ingredients.",
+                    "Define formulation goals, nutritional constraints, taste/texture targets, and safety assumptions explicitly.",
+                    "Provide deterministic evaluation criteria for ingredient balance, feasibility, and expected outcomes."
+                ].joined(separator: " ")
+            }
+
+            let goal = normalizeGoalSentence(extractGoalSeed(from: trimmed))
+            return [
+                goal,
+                "Make requirements explicit, deterministic, and testable instead of implied.",
+                "Define concrete output expectations and completion checks tied to the requested artifact."
+            ].joined(separator: " ")
+        }
+    }
+
+    private static func isImageEditingRequest(_ loweredText: String) -> Bool {
+        let cues = ["edit the image", "edit image", "photo", "picture", "image", "wearing", "add", "remove background", "mask"]
+        return cues.contains(where: loweredText.contains)
+    }
+
+    private static func normalizeGoalSentence(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !trimmed.isEmpty else {
+            return "Clarify and execute the exact user-requested goal."
+        }
+        return capitalized(trimmed) + "."
+    }
+
     private static func extractPhrase(regex: NSRegularExpression, in text: String) -> String? {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         guard let match = regex.firstMatch(in: text, options: [], range: range),
@@ -2257,6 +2436,124 @@ enum HeuristicPromptOptimizer {
                 "- Output follows the required structure exactly."
             ]
         }
+    }
+
+    private static func shouldPreferSemanticRewrite(
+        input: String,
+        analysis: PromptAnalysis,
+        context: HeuristicOptimizationContext
+    ) -> Bool {
+        guard context.target != .agenticIDE else { return false }
+        guard context.scenario == .generalAssistant || context.scenario == .longformWriting else { return false }
+
+        let parsed = parseBlocks(from: input)
+        let hasKnownHeadings = parsed.blocks.contains(where: { $0.key != nil })
+        if hasKnownHeadings {
+            return false
+        }
+
+        if containsExplicitFormatCue(in: input) {
+            return false
+        }
+
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineCount = trimmed.components(separatedBy: .newlines).filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        .count
+        let shortPrompt = analysis.tokenEstimate <= 180 || trimmed.count <= 360 || lineCount <= 6
+        return shortPrompt
+    }
+
+    private static func shouldUseStructuredScaffolding(
+        input: String,
+        context: HeuristicOptimizationContext,
+        intent: PromptIntent,
+        hasKnownHeadings: Bool,
+        preferSemanticRewrite: Bool
+    ) -> Bool {
+        if preferSemanticRewrite {
+            return false
+        }
+
+        if hasKnownHeadings || containsExplicitFormatCue(in: input) {
+            return true
+        }
+
+        if context.target == .agenticIDE {
+            return true
+        }
+
+        switch context.scenario {
+        case .ideCodingAssistant, .cliAssistant, .jsonStructuredOutput, .researchSummarization, .toolUsingAgent:
+            return true
+        case .generalAssistant, .longformWriting:
+            return intent == .general && input.count > 420
+        }
+    }
+
+    private static func containsExplicitFormatCue(in input: String) -> Bool {
+        let lowered = input.lowercased()
+        let cues = [
+            "output format",
+            "output contract",
+            "markdown headings",
+            "use sections",
+            "return json",
+            "json only",
+            "unified diff",
+            "validation commands"
+        ]
+        return cues.contains(where: lowered.contains)
+    }
+
+    private static func semanticSpecificityScore(in text: String, intent: PromptIntent) -> Int {
+        let lowered = PromptTextGuards.splitByCodeFences(text).compactMap { segment -> String? in
+            if case let .text(value) = segment { return value.lowercased() }
+            return nil
+        }
+        .joined(separator: "\n")
+
+        var score = 0
+        let universal = ["deterministic", "explicit", "test", "validation", "constraints", "scope", "edge case"]
+        for token in universal where lowered.contains(token) {
+            score += 1
+        }
+
+        switch intent {
+        case .creativeStory:
+            let tokens = ["beginning", "middle", "ending", "conflict", "resolution", "voice", "tense", "point of view"]
+            for token in tokens where lowered.contains(token) {
+                score += 1
+            }
+        case .gameDesign:
+            let tokens = ["objective", "setup", "turn order", "win", "draw", "rules", "board", "edge-case"]
+            for token in tokens where lowered.contains(token) {
+                score += 1
+            }
+        case .softwareBuild:
+            let tokens = ["requirements", "inputs", "outputs", "state", "error", "illegal move", "acceptance"]
+            for token in tokens where lowered.contains(token) {
+                score += 1
+            }
+        case .general:
+            let tokens = [
+                "artifact",
+                "completion",
+                "quality",
+                "consistency",
+                "subject identity",
+                "lighting",
+                "perspective",
+                "occlusion",
+                "edited result"
+            ]
+            for token in tokens where lowered.contains(token) {
+                score += 1
+            }
+        }
+
+        return min(8, score)
     }
 
     private static func containsHedgingLexicon(in text: String) -> Bool {
