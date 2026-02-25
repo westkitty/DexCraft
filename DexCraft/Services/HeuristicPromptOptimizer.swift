@@ -2063,7 +2063,14 @@ enum HeuristicPromptOptimizer {
             "build", "implement", "refactor", "fix", "patch", "test", "app", "api", "function", "class", "script",
             "repository", "file", "code", "swift", "python", "javascript", "react", "cli", "game", "website"
         ]
+        let buildVerbWords = ["build", "implement", "create", "develop", "fix", "refactor", "patch", "test", "code", "program"]
+        let technicalObjectWords = [
+            "app", "application", "game", "platformer", "website", "api", "function", "class", "script", "repository", "file",
+            "codebase", "cli", "frontend", "backend", "chess", "tic", "tac", "toe"
+        ]
+
         let hasSoftwareCue = softwareCueWords.contains(where: tokens.contains) ||
+            (buildVerbWords.contains(where: tokens.contains) && technicalObjectWords.contains(where: tokens.contains)) ||
             lowered.contains("source code") ||
             lowered.contains("codebase")
         if hasSoftwareCue {

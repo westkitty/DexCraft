@@ -1154,11 +1154,20 @@ final class PromptEngineViewModel: ObservableObject {
             return .gameDesign
         }
 
-        if [
+        let softwareCueWords = [
             "build", "implement", "refactor", "fix", "patch", "test", "code", "repository", "file", "api", "app",
             "swift", "python", "javascript", "cli", "script", "website", "game"
         ]
-        .contains(where: tokens.contains) || lowered.contains("codebase") || lowered.contains("source code") {
+        let buildVerbWords = ["build", "implement", "create", "develop", "fix", "refactor", "patch", "test", "code", "program"]
+        let technicalObjectWords = [
+            "app", "application", "game", "platformer", "website", "api", "function", "class", "script", "repository", "file",
+            "codebase", "cli", "frontend", "backend", "chess", "tic", "tac", "toe"
+        ]
+
+        if softwareCueWords.contains(where: tokens.contains) ||
+            (buildVerbWords.contains(where: tokens.contains) && technicalObjectWords.contains(where: tokens.contains)) ||
+            lowered.contains("codebase") ||
+            lowered.contains("source code") {
             return .softwareBuild
         }
 
