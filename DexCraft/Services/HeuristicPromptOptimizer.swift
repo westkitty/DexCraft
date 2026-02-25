@@ -1526,9 +1526,10 @@ enum HeuristicPromptOptimizer {
         let lowered = nonCodeText.lowercased()
         let tokens = tokenSet(from: lowered)
         let isGameRequest = lowered.contains("tic-tac-toe") || ["game", "platformer", "chess"].contains(where: tokens.contains)
-        let isVisualRequest =
-            ["animation", "website", "ui", "frontend", "interface", "animations"].contains(where: tokens.contains) ||
-            lowered.contains("user interface")
+        let hasAnimationCue =
+            ["animation", "animations", "animated", "motion", "transition", "transitions", "easing", "microinteraction", "microinteractions"]
+            .contains(where: tokens.contains)
+        let isVisualRequest = hasAnimationCue || (lowered.contains("user interface") && hasAnimationCue)
         let subject = extractGoalSeed(from: nonCodeText)
 
         var lines: [String]
@@ -2313,7 +2314,14 @@ enum HeuristicPromptOptimizer {
                 ]
             }
 
-            if lowered.contains("animation") || lowered.contains("website") || lowered.contains("ui") {
+            if
+                lowered.contains("animation") ||
+                lowered.contains("animations") ||
+                lowered.contains("animated") ||
+                lowered.contains("transition") ||
+                lowered.contains("transitions") ||
+                lowered.contains("motion")
+            {
                 return [
                     "List targeted screens/components and the intended animation outcome for each.",
                     "Define deterministic animation specs (duration, easing, triggers, reduced-motion fallback).",
@@ -2404,6 +2412,12 @@ enum HeuristicPromptOptimizer {
             }
 
             let goal = normalizeGoalSentence(extractGoalSeed(from: trimmed))
+            if !shouldUseRequirementContractLanguage(in: lowered) {
+                return [
+                    goal,
+                    "Return only the requested artifact with direct, concrete wording and no meta commentary."
+                ].joined(separator: " ")
+            }
             return [
                 goal,
                 "Make requirements explicit, deterministic, and testable instead of implied.",
@@ -2415,6 +2429,27 @@ enum HeuristicPromptOptimizer {
     private static func isImageEditingRequest(_ loweredText: String) -> Bool {
         let cues = ["edit the image", "edit image", "photo", "picture", "image", "wearing", "add", "remove background", "mask"]
         return cues.contains(where: loweredText.contains)
+    }
+
+    private static func shouldUseRequirementContractLanguage(in loweredText: String) -> Bool {
+        let tokens = tokenSet(from: loweredText)
+        let tokenCues = [
+            "requirements",
+            "deliverables",
+            "constraints",
+            "testable",
+            "deterministic",
+            "artifact"
+        ]
+        if tokenCues.contains(where: tokens.contains) {
+            return true
+        }
+
+        let phraseCues = [
+            "validation checks",
+            "output format"
+        ]
+        return phraseCues.contains(where: loweredText.contains)
     }
 
     private static func normalizeGoalSentence(_ raw: String) -> String {

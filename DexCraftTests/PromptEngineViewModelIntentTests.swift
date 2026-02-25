@@ -141,6 +141,55 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.contains("### output contract"))
     }
 
+    func testForgePromptHoroscopeRequestAvoidsGenericRequirementContractLanguage() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .geminiChatGPT
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Tell me my horoscope and the horoscope of my dog."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("horoscope"))
+        XCTAssertFalse(output.contains("make requirements explicit"))
+        XCTAssertFalse(output.contains("completion checks tied to the requested artifact"))
+    }
+
+    func testForgePromptWebsiteRequestAvoidsTinyMetaWrapperLanguage() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .ideCodingAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Design a website that will explain how cool my dog is."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("website"))
+        XCTAssertTrue(output.contains("dog"))
+        XCTAssertFalse(output.contains("rewritten prompt"))
+        XCTAssertFalse(output.contains("i made several changes"))
+    }
+
+    func testForgePromptMarioGameRequestDoesNotInjectAnimationTemplate() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .ideCodingAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Make a Mario style game about cats."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("mario") || output.contains("cats"))
+        XCTAssertFalse(output.contains("animation constraints"))
+        XCTAssertFalse(output.contains("surfaces/components"))
+    }
+
     func testForgePromptPoemUsesPoemLanguageNotStoryScaffold() {
         let (viewModel, cleanup) = makeViewModel()
         defer { cleanup() }

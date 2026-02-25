@@ -82,8 +82,7 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         )
 
         XCTAssertNotEqual(result.optimizedText, "Improve this maybe")
-        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("deterministic"))
-        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("completion checks"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("return only the requested artifact"))
         XCTAssertFalse(result.optimizedText.contains("### Output Format"))
         XCTAssertFalse(result.optimizedText.contains("### Deliverables"))
     }
@@ -352,7 +351,10 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         )
 
         XCTAssertFalse(result.optimizedText.contains("### Goal"))
-        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("deterministic"))
+        XCTAssertTrue(
+            result.optimizedText.localizedCaseInsensitiveContains("return only the requested artifact") ||
+            result.optimizedText.localizedCaseInsensitiveContains("deterministic")
+        )
     }
 
     func testGeneralAssistantSemanticRewriteStillWinsWhenTargetIsAgenticIDE() {
@@ -364,7 +366,7 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         XCTAssertFalse(result.optimizedText.contains("### Output Contract"))
         XCTAssertFalse(result.optimizedText.contains("### Deliverables"))
         XCTAssertFalse(result.optimizedText.contains("### Goal"))
-        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("completion checks"))
+        XCTAssertTrue(result.optimizedText.localizedCaseInsensitiveContains("smile like a dog"))
     }
 
     func testDomainPacksByTargetInjectExpectedPolicies() {

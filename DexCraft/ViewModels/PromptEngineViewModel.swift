@@ -1624,6 +1624,11 @@ final class PromptEngineViewModel: ObservableObject {
             return (false, "", ["Tiny model output too short to be reliable (\(working.count) chars)."])
         }
 
+        let maxLength = max(240, Int(Double(baselinePrompt.count) * 2.2))
+        if working.count > maxLength {
+            return (false, "", ["Tiny model output too long and likely drifted (\(working.count) chars)."])
+        }
+
         working = dedupePromptLinesPreservingOrder(in: working)
 
         let missingConstraints = ir.constraints.filter { !working.contains($0) }
@@ -1645,13 +1650,26 @@ final class PromptEngineViewModel: ObservableObject {
             notes.append("Tiny output did not preserve section headings; skipped direct replacement.")
         }
 
+        let intent = inferPromptIntent(from: ir.goalOrTask)
         let semanticCoverage = semanticAnchorCoverage(candidate: working, baselineTask: ir.goalOrTask)
-        if semanticCoverage < 0.34 {
+        let semanticPrecision = semanticAnchorPrecision(candidate: working, baselineTask: ir.goalOrTask)
+        let minimumCoverage = (intent == .general) ? 0.40 : 0.34
+        let minimumPrecision = (intent == .general) ? 0.22 : 0.16
+        if semanticCoverage < minimumCoverage {
             notes.append(String(format: "Tiny output semantic coverage too low (%.2f).", semanticCoverage))
+        }
+        if semanticPrecision < minimumPrecision {
+            notes.append(String(format: "Tiny output semantic precision too low (%.2f).", semanticPrecision))
         }
 
         let validation = validate(finalPrompt: working, ir: ir, options: options)
-        if validation.isValid && !hasBoilerplateWrapper && preservesHeadingStructure && semanticCoverage >= 0.34 {
+        if
+            validation.isValid &&
+            !hasBoilerplateWrapper &&
+            preservesHeadingStructure &&
+            semanticCoverage >= minimumCoverage &&
+            semanticPrecision >= minimumPrecision
+        {
             return (true, working, notes)
         }
 
@@ -1669,7 +1687,7 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         if
-            semanticCoverage >= 0.20,
+            semanticCoverage >= 0.24,
             let hintFallback = synthesizeTinyHintRefinement(
                 candidate: working,
                 baselinePrompt: baselinePrompt
@@ -1691,10 +1709,16 @@ final class PromptEngineViewModel: ObservableObject {
         let wrappers = [
             "here is a rewritten prompt",
             "here's a rewritten prompt",
+            "here’s a rewritten prompt",
+            "rewritten prompt:",
+            "this is a rewritten prompt",
             "this rewritten prompt",
             "it includes:",
             "meets all constraints",
-            "delivers the requested functionality"
+            "delivers the requested functionality",
+            "i made several changes",
+            "rewrite with minimal edits",
+            "changes i made"
         ]
         return wrappers.contains(where: lowered.contains)
     }
@@ -1726,6 +1750,17 @@ final class PromptEngineViewModel: ObservableObject {
 
         let overlap = anchors.intersection(candidateTokens)
         return Double(overlap.count) / Double(anchors.count)
+    }
+
+    private func semanticAnchorPrecision(candidate: String, baselineTask: String) -> Double {
+        let anchors = Set(semanticAnchorTokens(from: baselineTask))
+        guard !anchors.isEmpty else { return 1.0 }
+
+        let candidateTokens = Set(semanticAnchorTokens(from: candidate))
+        guard !candidateTokens.isEmpty else { return 0.0 }
+
+        let overlap = anchors.intersection(candidateTokens)
+        return Double(overlap.count) / Double(candidateTokens.count)
     }
 
     private func semanticAnchorTokens(from text: String) -> [String] {

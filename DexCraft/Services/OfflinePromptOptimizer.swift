@@ -465,6 +465,8 @@ final class EmbeddedTinyLLMService {
         Keep constraints and deliverables intact.
         Return only one rewritten prompt.
         Do not include meta commentary (for example: "Here is a rewritten prompt").
+        Do not explain your edits.
+        Do not include surrounding quotation marks.
         Preserve existing markdown headings exactly when headings are present.
         """
     }
@@ -476,18 +478,110 @@ final class EmbeddedTinyLLMService {
         Preserve all constraints and deliverables.
         Keep headings and section order unchanged when headings exist.
         Do not add or remove sections.
-        Return only the rewritten prompt text with no labels, prefaces, or explanations.
+        Return only the rewritten prompt text with no labels, prefaces, explanations, bullets, or titles.
 
         \(request.prompt)
         """
     }
 
     private func extractMarkedOutput(from text: String) -> String {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.isEmpty {
-            return ""
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+
+        if
+            let tagged = extractTaggedPrompt(from: normalized),
+            !tagged.isEmpty
+        {
+            return tagged
         }
-        return cleaned
+
+        if
+            let quoted = extractFirstQuotedBlock(from: normalized),
+            !quoted.isEmpty
+        {
+            return quoted
+        }
+
+        var lines = normalized
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        while let first = lines.first, isTinyMetaLine(first) {
+            lines.removeFirst()
+        }
+
+        if let explanationStart = lines.firstIndex(where: isTinyExplanationStart) {
+            lines = Array(lines[..<explanationStart])
+        }
+
+        let collapsed = lines
+            .filter { !$0.isEmpty && $0 != "[end of text]" }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !collapsed.isEmpty else { return "" }
+        return collapsed
+    }
+
+    private func extractTaggedPrompt(from text: String) -> String? {
+        guard
+            let start = text.range(of: "<prompt>", options: [.caseInsensitive]),
+            let end = text.range(of: "</prompt>", options: [.caseInsensitive], range: start.upperBound..<text.endIndex)
+        else {
+            return nil
+        }
+
+        let tagged = text[start.upperBound..<end.lowerBound]
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return tagged.isEmpty ? nil : tagged
+    }
+
+    private func extractFirstQuotedBlock(from text: String) -> String? {
+        let nsText = text as NSString
+        let range = NSRange(location: 0, length: nsText.length)
+        guard
+            let regex = try? NSRegularExpression(pattern: #""([^"\n]{48,2000})""#, options: []),
+            let match = regex.firstMatch(in: text, options: [], range: range),
+            let captureRange = Range(match.range(at: 1), in: text)
+        else {
+            return nil
+        }
+
+        let quoted = String(text[captureRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return quoted.isEmpty ? nil : quoted
+    }
+
+    private func isTinyMetaLine(_ line: String) -> Bool {
+        let lowered = line.lowercased()
+        if lowered.isEmpty { return true }
+        let markers = [
+            "here is a rewritten prompt",
+            "here's a rewritten prompt",
+            "here’s a rewritten prompt",
+            "rewritten prompt:",
+            "this is a rewritten prompt",
+            "this rewritten prompt",
+            "rewrite with minimal edits",
+            "scenario:",
+            "[end of text]"
+        ]
+        return markers.contains(where: lowered.contains)
+    }
+
+    private func isTinyExplanationStart(_ line: String) -> Bool {
+        let lowered = line.lowercased()
+        let markers = [
+            "i made several changes",
+            "changes i made",
+            "improvements:",
+            "rationale:",
+            "why this works"
+        ]
+        return markers.contains(where: lowered.contains)
     }
 
     private func resolveRuntimePath() throws -> String {
