@@ -2141,7 +2141,11 @@ enum HeuristicPromptOptimizer {
         let hasStoryCue =
             ["story", "narrative", "plot"].contains(where: tokens.contains) ||
             lowered.contains("short story") ||
-            lowered.contains("character arc")
+            lowered.contains("character arc") ||
+            lowered.contains("poem") ||
+            lowered.contains("haiku") ||
+            lowered.contains("sonnet") ||
+            lowered.contains("lyrics")
         if hasStoryCue {
             return .creativeStory
         }
@@ -2251,6 +2255,14 @@ enum HeuristicPromptOptimizer {
         switch intent {
         case .creativeStory:
             let subject = extractPhrase(regex: RegexBank.aboutSubject, in: sourceText) ?? "the requested subject"
+            let lowered = sourceText.lowercased()
+            if lowered.contains("poem") || lowered.contains("haiku") || lowered.contains("sonnet") || lowered.contains("lyrics") {
+                return [
+                    "Write one complete poem about \(subject) with consistent voice and imagery.",
+                    "Use a coherent structure (stanzas/line breaks) that matches the requested tone.",
+                    "End with a resonant closing line tied to the core theme."
+                ]
+            }
             return [
                 "Write one complete story about \(subject) with a clear beginning, middle, and ending.",
                 "Maintain a consistent narrative voice and include concrete sensory detail.",
@@ -2308,6 +2320,13 @@ enum HeuristicPromptOptimizer {
         switch intent {
         case .creativeStory:
             let subject = extractPhrase(regex: RegexBank.aboutSubject, in: trimmed) ?? "the requested subject"
+            if lowered.contains("poem") || lowered.contains("haiku") || lowered.contains("sonnet") || lowered.contains("lyrics") {
+                return [
+                    "Write one complete poem about \(subject).",
+                    "Use vivid imagery, consistent tone, and deliberate line/stanza structure that fits the requested style.",
+                    "Keep language concrete and end with a clear thematic resolution."
+                ].joined(separator: " ")
+            }
             return [
                 "Write one complete short story about \(subject).",
                 "Include a clear beginning, middle, and ending with a central conflict that is resolved in the final section.",

@@ -122,6 +122,29 @@ final class OfflinePromptOptimizerTests: XCTestCase {
         XCTAssertFalse(result.optimizedText.contains("### Deliverables"))
     }
 
+    func testListPromptAvoidsGenericOutputContractScaffold() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Create a list of 10 different ways to tell somebody they smile like a dog.",
+            context: HeuristicOptimizationContext(target: .claude, scenario: .generalAssistant)
+        )
+
+        XCTAssertFalse(result.optimizedText.contains("### Output Contract"))
+        XCTAssertFalse(result.optimizedText.contains("### Deliverables"))
+        XCTAssertFalse(result.optimizedText.localizedCaseInsensitiveContains("execution-oriented"))
+    }
+
+    func testPoemPromptUsesPoemSpecificLanguage() {
+        let result = HeuristicPromptOptimizer.optimize(
+            "Write me a poem about my dog and his wonderful way of being.",
+            context: HeuristicOptimizationContext(target: .claude, scenario: .longformWriting)
+        )
+
+        let lowered = result.optimizedText.lowercased()
+        XCTAssertTrue(lowered.contains("poem"))
+        XCTAssertFalse(lowered.contains("short story"))
+        XCTAssertFalse(result.optimizedText.contains("### Output Contract"))
+    }
+
     func testCreativeStoryPromptUpgradesGenericContractAndDeliverables() {
         let input = """
         ### Task

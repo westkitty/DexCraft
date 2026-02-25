@@ -57,6 +57,38 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
     }
 
+    func testForgePromptGeneralListUsesSemanticRewriteInsteadOfGenericContract() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Create a list of 10 different ways to tell somebody they smile like a dog."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt
+        XCTAssertFalse(output.contains("### Output Contract"))
+        XCTAssertFalse(output.contains("### Deliverables"))
+        XCTAssertFalse(output.localizedCaseInsensitiveContains("execution-oriented"))
+    }
+
+    func testForgePromptPoemUsesPoemLanguageNotStoryScaffold() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .longformWriting
+        viewModel.autoOptimizePrompt = true
+        viewModel.roughInput = "Write me a poem about my dog and his wonderful way of being."
+        viewModel.forgePrompt()
+
+        let output = viewModel.generatedPrompt.lowercased()
+        XCTAssertTrue(output.contains("poem"))
+        XCTAssertFalse(output.contains("short story"))
+        XCTAssertFalse(output.contains("### output contract"))
+    }
+
     func testForgePromptIDEAvoidsGenericContractAndDuplicateDeliverableSets() {
         let (viewModel, cleanup) = makeViewModel()
         defer { cleanup() }

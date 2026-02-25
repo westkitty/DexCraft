@@ -869,12 +869,7 @@ final class PromptEngineViewModel: ObservableObject {
         let trimmedCompiled = compiledPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRaw.isEmpty, !trimmedCompiled.isEmpty else { return false }
 
-        let parsed = parseInputSections(from: trimmedRaw)
-        let hasExplicitStructuredSections =
-            !parsed.goal.isEmpty ||
-            !parsed.context.isEmpty ||
-            !parsed.constraints.isEmpty ||
-            !parsed.deliverables.isEmpty
+        let hasExplicitStructuredSections = hasExplicitCoreHeadings(in: trimmedRaw)
 
         if hasExplicitStructuredSections {
             return false
@@ -889,6 +884,17 @@ final class PromptEngineViewModel: ObservableObject {
             lowered.contains("json")
 
         return !asksForStrictStructure
+    }
+
+    private func hasExplicitCoreHeadings(in text: String) -> Bool {
+        let lines = text.components(separatedBy: .newlines)
+        for line in lines {
+            guard let heading = detectHeading(in: line) else { continue }
+            if [.goal, .context, .constraints, .deliverables].contains(heading.key) {
+                return true
+            }
+        }
+        return false
     }
 
     private func resolveRewriteMode(autoOptimize: Bool, options: EnhancementOptions) -> RewriteMode {
@@ -1174,7 +1180,8 @@ final class PromptEngineViewModel: ObservableObject {
         let lowered = text.lowercased()
         let tokens = Set(lowered.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
 
-        if ["story", "narrative", "plot"].contains(where: tokens.contains) || lowered.contains("short story") {
+        if ["story", "narrative", "plot", "poem", "haiku", "sonnet", "lyrics"].contains(where: tokens.contains) ||
+            lowered.contains("short story") {
             return .creativeStory
         }
 
@@ -1212,6 +1219,14 @@ final class PromptEngineViewModel: ObservableObject {
         switch intent {
         case .creativeStory:
             let subject = extractSubjectAfterAbout(in: taskText) ?? "the requested subject"
+            let lowered = taskText.lowercased()
+            if lowered.contains("poem") || lowered.contains("haiku") || lowered.contains("sonnet") || lowered.contains("lyrics") {
+                return [
+                    "Write one complete poem about \(subject) with consistent tone and imagery.",
+                    "Use deliberate line/stanza structure and maintain voice consistency.",
+                    "End with a clear thematic resolution."
+                ]
+            }
             return [
                 "Write one complete story about \(subject) with a clear beginning, middle, and ending.",
                 "Provide a title and keep voice and tense consistent.",
