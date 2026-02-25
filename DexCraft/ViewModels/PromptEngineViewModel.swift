@@ -253,10 +253,6 @@ final class PromptEngineViewModel: ObservableObject {
         connectedModelSettings.resolvedTinyModelPath ?? ""
     }
 
-    var embeddedTinyRuntimePath: String {
-        connectedModelSettings.resolvedTinyRuntimePath ?? ""
-    }
-
     var embeddedTinyModelIdentifier: String {
         connectedModelSettings.resolvedTinyModelIdentifier
     }
@@ -284,12 +280,6 @@ final class PromptEngineViewModel: ObservableObject {
         updateConnectedModelSettings(updated)
     }
 
-    func updateEmbeddedTinyRuntimePath(_ path: String) {
-        var updated = connectedModelSettings
-        updated.embeddedTinyRuntimePath = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        updateConnectedModelSettings(updated)
-    }
-
     func browseEmbeddedTinyModelPath() {
         let panel = NSOpenPanel()
         panel.title = "Select SmolLM2 GGUF Model"
@@ -306,17 +296,6 @@ final class PromptEngineViewModel: ObservableObject {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         updateEmbeddedTinyModelPath(url.path)
-    }
-
-    func browseEmbeddedTinyRuntimePath() {
-        let panel = NSOpenPanel()
-        panel.title = "Select llama-cli Runtime"
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        updateEmbeddedTinyRuntimePath(url.path)
     }
 
     var qualityChecks: [QualityCheck] {
@@ -1591,7 +1570,15 @@ final class PromptEngineViewModel: ObservableObject {
             "### Canonical Draft (Reference)",
             "### Legacy Canonical Draft"
         ]
-        if forbiddenHeadings.contains(where: { working.contains($0) }) {
+        let forbiddenTokens = [
+            "model family",
+            "suggested parameters",
+            "applied rules",
+            "legacy canonical draft",
+            "canonical draft (reference)"
+        ]
+        if forbiddenHeadings.contains(where: { working.contains($0) }) ||
+            forbiddenTokens.contains(where: { working.localizedCaseInsensitiveContains($0) }) {
             return (false, "", ["Tiny model output contained forbidden scaffold headings."])
         }
 
@@ -1613,8 +1600,87 @@ final class PromptEngineViewModel: ObservableObject {
             return (true, working, notes)
         }
 
+        if
+            let structuredFallback = synthesizeTinyGoalRefinement(
+                candidate: working,
+                baselinePrompt: baselinePrompt
+            )
+        {
+            let fallbackValidation = validate(finalPrompt: structuredFallback, ir: ir, options: options)
+            if fallbackValidation.isValid {
+                notes.append("Applied tiny refinement to primary goal/task section while preserving baseline structure.")
+                return (true, structuredFallback, notes)
+            }
+        }
+
         let issues = validation.errors + validation.warnings
         return (false, "", issues.isEmpty ? ["Tiny output validation failed."] : issues)
+    }
+
+    private func synthesizeTinyGoalRefinement(
+        candidate: String,
+        baselinePrompt: String
+    ) -> String? {
+        let baselineLines = baselinePrompt.components(separatedBy: .newlines)
+        guard !baselineLines.isEmpty else { return nil }
+
+        let headingIndices = baselineLines.indices.filter { idx in
+            baselineLines[idx].trimmingCharacters(in: .whitespaces).hasPrefix("### ")
+        }
+        guard !headingIndices.isEmpty else { return nil }
+
+        let preferredGoalIndex = headingIndices.first {
+            let heading = baselineLines[$0].trimmingCharacters(in: .whitespaces).lowercased()
+            return heading.contains("goal") || heading.contains("task")
+        } ?? headingIndices.first!
+
+        let nextHeadingIndex = headingIndices.first(where: { $0 > preferredGoalIndex }) ?? baselineLines.count
+
+        let candidateCore = extractTinyGoalSentence(from: candidate)
+        guard !candidateCore.isEmpty else { return nil }
+
+        var merged = Array(baselineLines[0...preferredGoalIndex])
+        merged.append(candidateCore)
+        if nextHeadingIndex < baselineLines.count {
+            merged.append(contentsOf: baselineLines[nextHeadingIndex...])
+        }
+
+        return merged.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractTinyGoalSentence(from candidate: String) -> String {
+        var lines: [String] = []
+        for rawLine in candidate.components(separatedBy: .newlines) {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                if !lines.isEmpty { break }
+                continue
+            }
+            if trimmed == "```" || trimmed.hasPrefix("```") {
+                continue
+            }
+            let lowered = trimmed.lowercased()
+            if lowered.contains("rewritten prompt") ||
+                lowered.contains("model family") ||
+                lowered.contains("suggested parameters") ||
+                lowered.contains("applied rules") ||
+                lowered.contains("legacy canonical draft") {
+                continue
+            }
+
+            let cleaned = trimmed
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty {
+                lines.append(cleaned)
+            }
+
+            if lines.joined(separator: " ").count >= 180 {
+                break
+            }
+        }
+
+        return lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func dedupePromptLinesPreservingOrder(in text: String) -> String {

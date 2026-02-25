@@ -9,7 +9,7 @@ enum PromptFormatStyle: String, Codable {
 
 struct ConnectedModelSettings: Codable, Equatable {
     static let unknownUnsetLabel = "unknown/unset"
-    static let defaultTinyModelIdentifier = "HuggingFaceTB/SmolLM2-135M-Instruct"
+    static let defaultTinyModelIdentifier = "SmolLM2-135M-Instruct-Q3_K_M (Bundled)"
 
     // TODO: Replace defaults with exact connected model versions from Settings once known.
     var claudeModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
@@ -18,7 +18,6 @@ struct ConnectedModelSettings: Codable, Equatable {
     var agenticIDEModelVersion: String = ConnectedModelSettings.unknownUnsetLabel
     var useEmbeddedTinyModel: Bool?
     var embeddedTinyModelPath: String?
-    var embeddedTinyRuntimePath: String?
     var embeddedTinyModelIdentifier: String?
 
     var isEmbeddedTinyModelEnabled: Bool {
@@ -27,11 +26,6 @@ struct ConnectedModelSettings: Codable, Equatable {
 
     var resolvedTinyModelPath: String? {
         let cleaned = embeddedTinyModelPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return cleaned.isEmpty ? nil : cleaned
-    }
-
-    var resolvedTinyRuntimePath: String? {
-        let cleaned = embeddedTinyRuntimePath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return cleaned.isEmpty ? nil : cleaned
     }
 

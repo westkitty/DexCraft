@@ -340,9 +340,9 @@ enum EmbeddedTinyModelError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .runtimeNotFound:
-            return "Embedded tiny runtime not found. Configure llama.cpp `llama-cli` path in Settings."
+            return "Embedded tiny runtime is missing from DexCraft. Reinstall the app to restore bundled runtime files."
         case .modelNotFound:
-            return "Tiny model file not found. Configure SmolLM2-135M-Instruct GGUF path in Settings."
+            return "Bundled tiny model is missing. Reinstall DexCraft or choose a local .gguf model override in Settings."
         case .processFailed(let exitCode, let detail):
             let cleanedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
             if cleanedDetail.isEmpty {
@@ -362,16 +362,24 @@ final class EmbeddedTinyLLMService {
         request: EmbeddedTinyModelRequest,
         settings: ConnectedModelSettings
     ) throws -> EmbeddedTinyModelResult {
-        let runtimePath = try resolveRuntimePath(from: settings)
+        let runtimePath = try resolveRuntimePath()
+        let runtimeDirectoryPath = (runtimePath as NSString).deletingLastPathComponent
         let modelPath = try resolveModelPath(from: settings)
         let startedAt = Date()
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: runtimePath)
+        process.currentDirectoryURL = URL(fileURLWithPath: runtimeDirectoryPath)
         process.arguments = buildArguments(
             request: request,
             modelPath: modelPath
         )
+        var environment = ProcessInfo.processInfo.environment
+        let existingDyldPath = environment["DYLD_LIBRARY_PATH"] ?? ""
+        environment["DYLD_LIBRARY_PATH"] = existingDyldPath.isEmpty
+            ? runtimeDirectoryPath
+            : "\(runtimeDirectoryPath):\(existingDyldPath)"
+        process.environment = environment
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -428,34 +436,45 @@ final class EmbeddedTinyLLMService {
         request: EmbeddedTinyModelRequest,
         modelPath: String
     ) -> [String] {
+        let systemPrompt = renderSystemPrompt()
         let prompt = renderPrompt(request: request)
         return [
             "-m", modelPath,
+            "--conversation",
+            "--single-turn",
+            "--no-warmup",
+            "--threads", "4",
+            "--system-prompt", systemPrompt,
             "-p", prompt,
-            "-n", String(max(64, request.maxTokens)),
+            "-n", String(max(96, min(320, request.maxTokens))),
             "--temp", "0.2",
             "--top-p", "0.9",
+            "--top-k", "40",
             "--ctx-size", "2048",
             "--simple-io",
             "--no-display-prompt"
         ]
     }
 
+    private func renderSystemPrompt() -> String {
+        """
+        You rewrite user prompts for execution quality.
+        Return exactly one rewritten prompt.
+        Do not output prefaces, analysis, bullet labels, or multiple alternatives.
+        """
+    }
+
     private func renderPrompt(request: EmbeddedTinyModelRequest) -> String {
         """
-        You are DexCraft's embedded tiny prompt optimizer.
-        Rewrite the input prompt so it is clearer and more executable.
-        Keep all hard constraints and deliverables.
-        Preserve existing section structure and heading style when present.
-        Do not introduce legacy scaffold/report headings.
-        Forbidden headings: ### Model Family, ### Suggested Parameters, ### Applied Rules, ### Warnings, ### Legacy Canonical Draft.
-        Output only the rewritten prompt text.
-        Never add explanations.
-
         Scenario: \(request.scenario.rawValue)
-        ---
+        Rewrite the following prompt to be clearer and more executable with minimal edits.
+        Preserve all constraints and deliverables.
+        Keep headings and section order unchanged when headings exist.
+        Do not add or remove sections.
+        Return only the rewritten prompt text with no labels or explanations.
+        Forbidden headings: ### Model Family, ### Suggested Parameters, ### Applied Rules, ### Warnings, ### Canonical Draft (Reference), ### Legacy Canonical Draft.
+
         \(request.prompt)
-        ---
         """
     }
 
@@ -467,26 +486,19 @@ final class EmbeddedTinyLLMService {
         return cleaned
     }
 
-    private func resolveRuntimePath(from settings: ConnectedModelSettings) throws -> String {
-        if let explicit = settings.resolvedTinyRuntimePath, fileManager.isExecutableFile(atPath: explicit) {
-            return explicit
+    private func resolveRuntimePath() throws -> String {
+        guard
+            let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
+        else {
+            throw EmbeddedTinyModelError.runtimeNotFound
         }
 
-        if let bundled = Bundle.main.path(forResource: "llama-cli", ofType: nil),
-           fileManager.isExecutableFile(atPath: bundled) {
-            return bundled
+        let runtimeExecutable = runtimeDirectory.appendingPathComponent("llama-completion").path
+        guard fileManager.isExecutableFile(atPath: runtimeExecutable) else {
+            throw EmbeddedTinyModelError.runtimeNotFound
         }
 
-        let candidatePaths = [
-            "/opt/homebrew/bin/llama-cli",
-            "/usr/local/bin/llama-cli"
-        ]
-
-        if let match = candidatePaths.first(where: { fileManager.isExecutableFile(atPath: $0) }) {
-            return match
-        }
-
-        throw EmbeddedTinyModelError.runtimeNotFound
+        return runtimeExecutable
     }
 
     private func resolveModelPath(from settings: ConnectedModelSettings) throws -> String {
@@ -494,9 +506,19 @@ final class EmbeddedTinyLLMService {
             return explicit
         }
 
-        if let bundled = Bundle.main.path(forResource: "SmolLM2-135M-Instruct-Q4_K_M", ofType: "gguf"),
-           fileManager.fileExists(atPath: bundled) {
-            return bundled
+        if
+            let runtimeDirectory = Bundle.main.resourceURL?.appendingPathComponent("EmbeddedTinyRuntime", isDirectory: true)
+        {
+            let bundledCandidates = [
+                "SmolLM2-135M-Instruct-Q3_K_M.gguf",
+                "SmolLM2-135M-Instruct-Q4_K_M.gguf"
+            ]
+            for filename in bundledCandidates {
+                let bundledModelPath = runtimeDirectory.appendingPathComponent(filename).path
+                if fileManager.fileExists(atPath: bundledModelPath) {
+                    return bundledModelPath
+                }
+            }
         }
 
         throw EmbeddedTinyModelError.modelNotFound

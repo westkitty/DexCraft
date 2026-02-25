@@ -488,8 +488,12 @@ struct PrimaryPanelView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
+            Text("Runtime is bundled inside DexCraft. No external llama setup is required.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             VStack(alignment: .leading, spacing: 6) {
-                Text("Tiny Model (.gguf)")
+                Text("Tiny Model Override (.gguf, optional)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
@@ -505,28 +509,6 @@ struct PrimaryPanelView: View {
 
                     Button("Browse") {
                         viewModel.browseEmbeddedTinyModelPath()
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Tiny Runtime (llama-cli)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 8) {
-                    TextField(
-                        "/opt/homebrew/bin/llama-cli",
-                        text: Binding(
-                            get: { viewModel.embeddedTinyRuntimePath },
-                            set: { viewModel.updateEmbeddedTinyRuntimePath($0) }
-                        )
-                    )
-                    .textFieldStyle(.roundedBorder)
-
-                    Button("Browse") {
-                        viewModel.browseEmbeddedTinyRuntimePath()
                     }
                     .buttonStyle(.bordered)
                 }
