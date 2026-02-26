@@ -1765,6 +1765,15 @@ final class PromptEngineViewModel: ObservableObject {
 
         working = dedupePromptLinesPreservingOrder(in: working)
 
+        let externalLinkSanitization = sanitizeUnexpectedExternalLinks(
+            candidate: working,
+            baselinePrompt: baselinePrompt
+        )
+        working = externalLinkSanitization.sanitized
+        if externalLinkSanitization.removedCount > 0 {
+            notes.append("Removed \(externalLinkSanitization.removedCount) unexpected external URL(s) not present in input.")
+        }
+
         let missingConstraints = ir.constraints.filter { !working.contains($0) }
         if !missingConstraints.isEmpty {
             notes.append("Re-appended \(missingConstraints.count) missing constraints from baseline.")
@@ -2125,6 +2134,78 @@ final class PromptEngineViewModel: ObservableObject {
         }
 
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func sanitizeUnexpectedExternalLinks(
+        candidate: String,
+        baselinePrompt: String
+    ) -> (sanitized: String, removedCount: Int) {
+        let allowed = Set(extractHTTPURLs(from: baselinePrompt))
+        let candidateURLs = Set(extractHTTPURLs(from: candidate))
+        let unexpected = candidateURLs.subtracting(allowed)
+        guard !unexpected.isEmpty else {
+            return (candidate, 0)
+        }
+
+        var sanitized = candidate
+        var removedCount = 0
+
+        // Remove markdown links that point to unexpected URLs while keeping label text.
+        if let markdownLinkRegex = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\((https?://[^\s\)]+)\)"#, options: [.caseInsensitive]) {
+            let nsRange = NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
+            let matches = markdownLinkRegex.matches(in: sanitized, options: [], range: nsRange).reversed()
+            for match in matches {
+                guard
+                    match.numberOfRanges >= 3,
+                    let textRange = Range(match.range(at: 1), in: sanitized),
+                    let urlRange = Range(match.range(at: 2), in: sanitized)
+                else {
+                    continue
+                }
+                let url = normalizeHTTPURL(String(sanitized[urlRange]))
+                if unexpected.contains(url), let fullRange = Range(match.range(at: 0), in: sanitized) {
+                    let label = String(sanitized[textRange])
+                    sanitized.replaceSubrange(fullRange, with: label)
+                    removedCount += 1
+                }
+            }
+        }
+
+        // Remove any remaining raw unexpected URLs.
+        for url in unexpected {
+            if sanitized.localizedCaseInsensitiveContains(url) {
+                sanitized = sanitized.replacingOccurrences(of: url, with: "", options: [.caseInsensitive])
+                removedCount += 1
+            }
+        }
+
+        sanitized = sanitized
+            .components(separatedBy: .newlines)
+            .map { line in
+                line.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+            }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (sanitized, removedCount)
+    }
+
+    private func extractHTTPURLs(from text: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: #"https?://[^\s\)\]]+"#, options: [.caseInsensitive]) else {
+            return []
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.matches(in: text, options: [], range: range).compactMap { match in
+            guard let tokenRange = Range(match.range, in: text) else { return nil }
+            return normalizeHTTPURL(String(text[tokenRange]))
+        }
+    }
+
+    private func normalizeHTTPURL(_ raw: String) -> String {
+        raw
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \t\n\r\"'`<>[](){}.,;:!?"))
+            .lowercased()
     }
 
     private func computeAmbiguityIndex(for text: String) -> Double {

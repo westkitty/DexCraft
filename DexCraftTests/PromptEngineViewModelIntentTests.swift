@@ -511,6 +511,50 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertTrue(viewModel.generatedPrompt.localizedCaseInsensitiveContains("westkitty"))
     }
 
+    func testTinyOutputUnexpectedURLIsSanitizedWhenNotInInput() throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-url-sanitize-runtime-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/sh
+        cat <<'OUT'
+        ### Goal
+        [SimCity 3000](https://simcity.com/projects/3000/) Create a clone of SimCity 3000.
+        ### Deliverables
+        - Define requirements.
+        OUT
+        exit 0
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: scriptURL.path)
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        setenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH", scriptURL.path, 1)
+        defer { unsetenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH") }
+
+        let tinyModelPath = makeInvalidModelFile()
+        defer { try? FileManager.default.removeItem(atPath: tinyModelPath) }
+
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = true
+        settings.useEmbeddedFallbackModel = false
+        settings.embeddedTinyModelPath = tinyModelPath
+        settings.embeddedFallbackModelPath = nil
+        viewModel.updateConnectedModelSettings(settings)
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.roughInput = "Create a clone of SimCity 3000."
+        viewModel.forgePrompt()
+
+        XCTAssertFalse(viewModel.generatedPrompt.localizedCaseInsensitiveContains("https://"))
+        XCTAssertFalse(viewModel.generatedPrompt.localizedCaseInsensitiveContains("simcity.com"))
+        XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("pass applied"))
+    }
+
     private func makeInvalidModelFile() -> String {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dexcraft-invalid-model-\(UUID().uuidString).gguf")
