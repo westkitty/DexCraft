@@ -464,6 +464,53 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertTrue(viewModel.generatedPrompt.localizedCaseInsensitiveContains("westkitty"))
     }
 
+    func testTinyLowOverlapTemplateOutputStillAppliesHintRefinementFallback() throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-low-overlap-runtime-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/sh
+        cat <<'OUT'
+        ### Output Format
+        Use sections in this order: Goal, Requirements, Constraints, Deliverables, Validation.
+        Requirements must include concrete behavior and visual/interaction expectations.
+        Validation must include deterministic checks tied to each requirement.
+        ### Requirements
+        - Translate the goal into concrete, testable functional requirements with explicit inputs/outputs.
+        - Specify behavioral constraints and out-of-scope boundaries.
+        OUT
+        exit 0
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: scriptURL.path)
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        setenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH", scriptURL.path, 1)
+        defer { unsetenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH") }
+
+        let tinyModelPath = makeInvalidModelFile()
+        defer { try? FileManager.default.removeItem(atPath: tinyModelPath) }
+
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = true
+        settings.useEmbeddedFallbackModel = false
+        settings.embeddedTinyModelPath = tinyModelPath
+        settings.embeddedFallbackModelPath = nil
+        viewModel.updateConnectedModelSettings(settings)
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.roughInput = "Remove all personalized, identifying information from the GitHub repository. The only thing that you can keep is my username, WestKitty."
+        viewModel.forgePrompt()
+
+        XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("tiny model pass applied"))
+        XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("failed validation"))
+        XCTAssertTrue(viewModel.generatedPrompt.localizedCaseInsensitiveContains("westkitty"))
+    }
+
     private func makeInvalidModelFile() -> String {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dexcraft-invalid-model-\(UUID().uuidString).gguf")

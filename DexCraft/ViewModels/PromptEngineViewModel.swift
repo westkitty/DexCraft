@@ -1821,15 +1821,15 @@ final class PromptEngineViewModel: ObservableObject {
             }
         }
 
-        if
-            semanticCoverage >= 0.24,
-            let hintFallback = synthesizeTinyHintRefinement(
-                candidate: working,
-                baselinePrompt: baselinePrompt
-            )
-        {
+        if let hintFallback = synthesizeTinyHintRefinement(
+            candidate: working,
+            baselinePrompt: baselinePrompt
+        ) {
             let hintValidation = validate(finalPrompt: hintFallback, ir: ir, options: options)
             if hintValidation.isValid {
+                if semanticCoverage < 0.24 {
+                    notes.append(String(format: "Applied hint refinement despite low semantic coverage (%.2f).", semanticCoverage))
+                }
                 notes.append("Applied tiny hint refinement in goal/task section while preserving baseline structure.")
                 return (true, hintFallback, notes)
             }
@@ -1992,6 +1992,13 @@ final class PromptEngineViewModel: ObservableObject {
 
     private func extractTinyHints(from candidate: String) -> [String] {
         let hintLexicon: [String: String] = [
+            "personal": "personal data removal",
+            "identify": "identity-safe wording",
+            "identifying": "identity-safe wording",
+            "repository": "repository scope",
+            "repo": "repository scope",
+            "github": "repository scope",
+            "username": "explicit username exception",
             "rule": "explicit rules",
             "rules": "explicit rules",
             "output": "explicit outputs",
