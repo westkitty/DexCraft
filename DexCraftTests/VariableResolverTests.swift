@@ -52,4 +52,28 @@ final class VariableResolverTests: XCTestCase {
         XCTAssertEqual(result.resolvedText, "XYX")
         XCTAssertEqual(result.detected, ["a", "b"])
     }
+
+    func testDetectSupportsDashesAndNumbers() {
+        let text = "{user_name} {project-id} {A_B-C} {2fa-token}"
+
+        let detected = resolver.detect(in: text)
+
+        XCTAssertEqual(detected, ["user_name", "project-id", "A_B-C", "2fa-token"])
+    }
+
+    func testBlankAndWhitespaceValuesRemainUnfilled() {
+        let text = "Do X for {client} and {date} and {time}"
+
+        let result = resolver.resolve(
+            text: text,
+            values: [
+                "client": "Acme",
+                "date": "",
+                "time": "   "
+            ]
+        )
+
+        XCTAssertEqual(result.resolvedText, "Do X for Acme and {date} and {time}")
+        XCTAssertEqual(result.unfilled, ["date", "time"])
+    }
 }

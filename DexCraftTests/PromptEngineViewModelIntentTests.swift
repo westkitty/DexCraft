@@ -555,6 +555,65 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("pass applied"))
     }
 
+    func testQualityGateGoalDefinedThresholdUsesTwelveCharacters() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.autoOptimizePrompt = false
+        viewModel.roughInput = "abcdefghijk" // 11 chars
+        viewModel.forgePrompt()
+
+        guard let shortGoalCheck = viewModel.qualityChecks.first(where: { $0.title == "Goal Defined" }) else {
+            return XCTFail("Missing Goal Defined check for short input.")
+        }
+        XCTAssertFalse(shortGoalCheck.passed)
+
+        viewModel.roughInput = "abcdefghijkl" // 12 chars
+        viewModel.forgePrompt()
+
+        guard let longGoalCheck = viewModel.qualityChecks.first(where: { $0.title == "Goal Defined" }) else {
+            return XCTFail("Missing Goal Defined check for 12-char input.")
+        }
+        XCTAssertTrue(longGoalCheck.passed)
+    }
+
+    func testQualityGateConstraintsActiveReflectsActiveConstraintCount() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.autoOptimizePrompt = false
+        viewModel.roughInput = "Create deterministic planner output."
+
+        var options = EnhancementOptions()
+        options.enforceMarkdown = false
+        options.noConversationalFiller = false
+        options.addFileTreeRequest = false
+        options.includeVerificationChecklist = false
+        options.includeRisksAndEdgeCases = false
+        options.includeAlternatives = false
+        options.includeValidationSteps = false
+        options.includeRevertPlan = false
+        options.preferSectionAwareParsing = false
+        options.includeSearchVerificationRequirements = false
+        options.strictCodeOnly = false
+        viewModel.options = options
+        viewModel.forgePrompt()
+
+        guard let inactiveCheck = viewModel.qualityChecks.first(where: { $0.title == "Constraints Active" }) else {
+            return XCTFail("Missing Constraints Active check when all options are disabled.")
+        }
+        XCTAssertFalse(inactiveCheck.passed)
+
+        options.enforceMarkdown = true
+        viewModel.options = options
+        viewModel.forgePrompt()
+
+        guard let activeCheck = viewModel.qualityChecks.first(where: { $0.title == "Constraints Active" }) else {
+            return XCTFail("Missing Constraints Active check when one option is enabled.")
+        }
+        XCTAssertTrue(activeCheck.passed)
+    }
+
     private func makeInvalidModelFile() -> String {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dexcraft-invalid-model-\(UUID().uuidString).gguf")
@@ -571,6 +630,10 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
             storageManager: storageManager,
             promptLibraryRepository: repository
         )
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = false
+        settings.useEmbeddedFallbackModel = false
+        viewModel.updateConnectedModelSettings(settings)
 
         let cleanup = {
             let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

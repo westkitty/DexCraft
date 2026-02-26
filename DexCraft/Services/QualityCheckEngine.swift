@@ -9,6 +9,7 @@ final class QualityCheckEngine {
     ) -> [QualityCheck] {
         let trimmedGoal = ctx.goal.trimmingCharacters(in: .whitespacesAndNewlines)
         let goalPassed = !sections.includeGoal || !trimmedGoal.isEmpty
+        let goalDefined = trimmedGoal.count >= 12
 
         let missingVariables = variableResult.unfilled
         let variablesPassed = missingVariables.isEmpty
@@ -17,6 +18,7 @@ final class QualityCheckEngine {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let constraintsPassed = !sections.includeConstraints || !nonEmptyConstraints.isEmpty
+        let constraintsActive = !sections.includeConstraints || !nonEmptyConstraints.isEmpty
 
         let outputSizePassed = generatedPrompt.count >= 200 && generatedPrompt.count <= 20_000
 
@@ -26,6 +28,12 @@ final class QualityCheckEngine {
                 passed: goalPassed,
                 severity: .error,
                 detail: goalPassed ? nil : "Goal section is enabled, but the goal is empty."
+            ),
+            QualityCheck(
+                title: "Goal Defined",
+                passed: goalDefined,
+                severity: .warning,
+                detail: goalDefined ? nil : "Goal must be at least 12 non-whitespace characters."
             ),
             QualityCheck(
                 title: "Variable completeness",
@@ -38,6 +46,12 @@ final class QualityCheckEngine {
                 passed: constraintsPassed,
                 severity: .warning,
                 detail: constraintsPassed ? nil : "Constraints section is enabled, but no constraints were provided."
+            ),
+            QualityCheck(
+                title: "Constraints Active",
+                passed: constraintsActive,
+                severity: .warning,
+                detail: constraintsActive ? nil : "Enable or supply at least one non-empty constraint."
             ),
             QualityCheck(
                 title: "Output size sanity",

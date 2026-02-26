@@ -366,6 +366,8 @@ final class PromptEngineViewModel: ObservableObject {
     }
 
     var qualityChecks: [QualityCheck] {
+        let goalDefined = roughInput.trimmingCharacters(in: .whitespacesAndNewlines).count >= 12
+        let constraintsActive = options.activeConstraintCount > 0
         let variablesComplete = detectedVariables.allSatisfy {
             !(variableValues[$0] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -373,6 +375,8 @@ final class PromptEngineViewModel: ObservableObject {
         if autoOptimizePrompt {
             guard let output = lastOptimizationOutput, !generatedPrompt.isEmpty else {
                 return [
+                    QualityCheck(title: "Goal Defined", passed: goalDefined),
+                    QualityCheck(title: "Constraints Active", passed: constraintsActive),
                     QualityCheck(title: "Optimized Prompt Present", passed: false),
                     QualityCheck(title: "Applied Rules Present", passed: false),
                     QualityCheck(title: "Variables Filled", passed: variablesComplete)
@@ -387,6 +391,8 @@ final class PromptEngineViewModel: ObservableObject {
                 output.appliedRules.contains(where: { $0.localizedCaseInsensitiveContains("tool") })
 
             return [
+                QualityCheck(title: "Goal Defined", passed: goalDefined),
+                QualityCheck(title: "Constraints Active", passed: constraintsActive),
                 QualityCheck(title: "Optimized Prompt Present", passed: hasPrompt),
                 QualityCheck(title: "Applied Rules Present", passed: hasRules),
                 QualityCheck(title: "CLI Constraints Applied", passed: hasCLIConstraints),
@@ -398,6 +404,8 @@ final class PromptEngineViewModel: ObservableObject {
 
         guard let canonical = lastCanonicalPrompt, !generatedPrompt.isEmpty else {
             return [
+                QualityCheck(title: "Goal Defined", passed: goalDefined),
+                QualityCheck(title: "Constraints Active", passed: constraintsActive),
                 QualityCheck(title: "Goal Section Present", passed: false),
                 QualityCheck(title: "Constraints Section Present", passed: false),
                 QualityCheck(title: "Section Order Valid", passed: false),
@@ -438,6 +446,8 @@ final class PromptEngineViewModel: ObservableObject {
         let sectionOrderValid = hasRequiredSectionOrder(in: generatedPrompt)
 
         return [
+            QualityCheck(title: "Goal Defined", passed: goalDefined),
+            QualityCheck(title: "Constraints Active", passed: constraintsActive),
             QualityCheck(title: "Assumptions Section Present", passed: hasAssumptions),
             QualityCheck(title: "Goal Section Present", passed: hasGoal),
             QualityCheck(title: "Goal Content Valid", passed: hasSemanticGoal),

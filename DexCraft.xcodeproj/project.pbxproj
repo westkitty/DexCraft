@@ -299,11 +299,12 @@
 		A1B2C3D4E5F6012345673001 /* DexCraft */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1B2C3D4E5F6012345674002 /* Build configuration list for PBXNativeTarget "DexCraft" */;
-			buildPhases = (
-				A1B2C3D4E5F6012345672001 /* Sources */,
-				A1B2C3D4E5F6012345672002 /* Frameworks */,
-				A1B2C3D4E5F6012345672003 /* Resources */,
-			);
+				buildPhases = (
+					A1B2C3D4E5F6012345672001 /* Sources */,
+					A1B2C3D4E5F6012345672002 /* Frameworks */,
+					A1B2C3D4E5F6012345672003 /* Resources */,
+					A1B2C3D4E5F6012345672007 /* Embed Tiny Runtime */,
+				);
 			buildRules = (
 			);
 			dependencies = (
@@ -386,6 +387,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1B2C3D4E5F6012345672007 /* Embed Tiny Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/Tools/embedded-tiny-runtime/macos-arm64/llama-completion",
+			);
+			name = "Embed Tiny Runtime";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/EmbeddedTinyRuntime/llama-completion",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nSRC_DIR=\"$PROJECT_DIR/Tools/embedded-tiny-runtime/macos-arm64\"\nDEST_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/EmbeddedTinyRuntime\"\nif [ -d \"$SRC_DIR\" ]; then\n  mkdir -p \"$DEST_DIR\"\n  /usr/bin/ditto \"$SRC_DIR\" \"$DEST_DIR\"\n  /bin/chmod +x \"$DEST_DIR/llama-completion\" || true\nelse\n  echo \"warning: Embedded tiny runtime not found at $SRC_DIR\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A1B2C3D4E5F6012345672001 /* Sources */ = {

@@ -119,6 +119,14 @@ enum PromptFormattingEngine {
             lines.append(strictCodeConstraint)
         }
 
+        if options.addFileTreeRequest {
+            lines.append("Include a File Tree Request section before implementation details.")
+        }
+
+        if options.includeVerificationChecklist {
+            lines.append("Include a deterministic Verification Checklist section tied to requirements.")
+        }
+
         return lines
     }
 
@@ -174,6 +182,7 @@ enum PromptFormattingEngine {
     ) -> String {
         var sections: [String] = []
 
+        sections.append("# DexCraft Agentic System Rules")
         sections.append(section(title: "Provider", body: profile.provider))
         sections.append(section(title: "Connected Model", body: connectedModelLabel(for: profile)))
         sections.append(section(title: "System Preamble", body: bulletize(profile.defaultSystemPreambleLines)))
@@ -186,6 +195,8 @@ enum PromptFormattingEngine {
 
         sections.append(section(title: "Constraints", body: bulletize(constraints)))
         sections.append(section(title: "Deliverables", body: bulletize(deliverables)))
+        sections.append(section(title: "File Tree Request", body: "- Request the current file tree before implementation details."))
+        sections.append(section(title: "Implementation Style", body: bulletize(profile.tacticsLines)))
         sections.append(section(title: "Plan", body: bulletize(profile.tacticsLines)))
         sections.append(section(title: "Unified Diff", body: "- Provide a concise, file-scoped unified diff summary."))
         sections.append(section(title: "Tests", body: "- List deterministic test cases and expected outcomes."))
@@ -250,6 +261,9 @@ enum PromptFormattingEngine {
         }
 
         var sections: [String] = []
+        if options.noConversationalFiller {
+            sections.append("Respond only with the requested output. Do not apologize or use conversational filler.")
+        }
         sections.append(section(title: "Provider", body: profile.provider))
         sections.append(section(title: "Connected Model", body: connectedModelLabel(for: profile)))
         sections.append(section(title: "System Preamble", body: bulletize(profile.defaultSystemPreambleLines)))

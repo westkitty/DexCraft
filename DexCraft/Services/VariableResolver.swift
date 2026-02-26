@@ -7,7 +7,7 @@ struct VariableResolutionResult: Equatable {
 }
 
 final class VariableResolver {
-    private static let pattern = #"\{([A-Za-z_][A-Za-z0-9_]*)\}"#
+    private static let pattern = #"\{([A-Za-z0-9_\-]+)\}"#
 
     func detect(in text: String) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: Self.pattern) else {
@@ -74,8 +74,9 @@ final class VariableResolver {
                 detected.append(name)
             }
 
-            if let value = values[name] {
-                resolved += value
+            let replacement = values[name]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let replacement, !replacement.isEmpty {
+                resolved += replacement
             } else {
                 resolved += String(text[tokenRange])
                 if unfilledSet.insert(name).inserted {
