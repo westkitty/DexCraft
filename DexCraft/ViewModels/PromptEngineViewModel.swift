@@ -672,15 +672,22 @@ final class PromptEngineViewModel: ObservableObject {
                     tinyModelStatus = fallbackAttempt.status
                 } else {
                     tinyModelStatus = fallbackAttempt.status
-                    statusMessage = tinyModelStatus
                 }
             } else {
                 tinyModelStatus = tinyAttempt.status
-                statusMessage = tinyModelStatus
             }
         } else {
             tinyModelStatus = ""
         }
+
+        selectedFinalPrompt = ensureReliableFinalPrompt(
+            candidate: selectedFinalPrompt,
+            baselinePrompt: baselinePrompt,
+            rawInputFallback: resolvedInput,
+            ir: selectedIR,
+            options: options,
+            notes: &fallbackNotes
+        )
 
         finalPrompt = selectedFinalPrompt
         generatedPrompt = selectedFinalPrompt
@@ -756,6 +763,45 @@ final class PromptEngineViewModel: ObservableObject {
             learnedHeuristicWeights = tuned
             storageManager.saveOptimizerWeights(tuned)
         }
+    }
+
+    private func ensureReliableFinalPrompt(
+        candidate: String,
+        baselinePrompt: String,
+        rawInputFallback: String,
+        ir: PromptIR,
+        options: EnhancementOptions,
+        notes: inout [String]
+    ) -> String {
+        let trimmedCandidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedCandidate.isEmpty {
+            let candidateValidation = validate(finalPrompt: trimmedCandidate, ir: ir, options: options)
+            if candidateValidation.isValid {
+                return trimmedCandidate
+            }
+            notes.append("Final candidate failed validation; attempting baseline recovery.")
+        } else {
+            notes.append("Final candidate was empty; attempting baseline recovery.")
+        }
+
+        let trimmedBaseline = baselinePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedBaseline.isEmpty {
+            let baselineValidation = validate(finalPrompt: trimmedBaseline, ir: ir, options: options)
+            if baselineValidation.isValid {
+                notes.append("Recovered final prompt from validated baseline candidate.")
+                return trimmedBaseline
+            }
+            notes.append("Baseline recovery failed validation; using raw input fallback.")
+        }
+
+        let trimmedRaw = rawInputFallback.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedRaw.isEmpty {
+            notes.append("Recovered final prompt from raw input fallback.")
+            return trimmedRaw
+        }
+
+        notes.append("Raw input fallback was unexpectedly empty; using static fallback prompt.")
+        return "Provide a clear task, constraints, and expected output format."
     }
 
     func copyToClipboard() {
@@ -2073,6 +2119,36 @@ final class PromptEngineViewModel: ObservableObject {
                 status: "\(prefix) output failed validation. Kept heuristic result.",
                 notes: notes
             )
+        } catch let modelError as EmbeddedTinyModelError {
+            switch modelError {
+            case .invalidOutput:
+                return EmbeddedTierAttemptResult(
+                    acceptedOutput: nil,
+                    status: "\(prefix) returned unusable output. Kept heuristic result.",
+                    notes: [
+                        "\(prefix) returned unusable output; heuristic result kept.",
+                        "\(prefix) error: \(modelError.localizedDescription)"
+                    ]
+                )
+            case .processFailed:
+                return EmbeddedTierAttemptResult(
+                    acceptedOutput: nil,
+                    status: "\(prefix) execution failed: \(modelError.localizedDescription)",
+                    notes: [
+                        "\(prefix) execution failed; heuristic result kept.",
+                        "\(prefix) error: \(modelError.localizedDescription)"
+                    ]
+                )
+            case .runtimeNotFound, .tinyModelNotFound, .fallbackModelNotFound:
+                return EmbeddedTierAttemptResult(
+                    acceptedOutput: nil,
+                    status: "\(prefix) unavailable: \(modelError.localizedDescription)",
+                    notes: [
+                        "\(prefix) unavailable; heuristic result kept.",
+                        "\(prefix) error: \(modelError.localizedDescription)"
+                    ]
+                )
+            }
         } catch {
             return EmbeddedTierAttemptResult(
                 acceptedOutput: nil,

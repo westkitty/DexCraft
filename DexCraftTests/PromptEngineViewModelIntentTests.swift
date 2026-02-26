@@ -387,6 +387,98 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("fallback model unavailable"))
     }
 
+    func testFallbackInvalidOutputIsReportedAsUnusableNotUnavailable() throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-invalid-output-runtime-\(UUID().uuidString).sh")
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-invalid-output-state-\(UUID().uuidString)")
+
+        let script = """
+        #!/bin/sh
+        STATE_FILE="$1"
+        shift
+        if [ ! -f "$STATE_FILE" ]; then
+          touch "$STATE_FILE"
+          echo "forced primary failure" 1>&2
+          exit 42
+        fi
+        echo "[end of text]"
+        exit 0
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: scriptURL.path)
+
+        let wrapperURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dexcraft-invalid-output-wrapper-\(UUID().uuidString).sh")
+        let wrapper = """
+        #!/bin/sh
+        "\(scriptURL.path)" "\(stateURL.path)" "$@"
+        """
+        try wrapper.write(to: wrapperURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: wrapperURL.path)
+
+        defer {
+            try? FileManager.default.removeItem(at: scriptURL)
+            try? FileManager.default.removeItem(at: wrapperURL)
+            try? FileManager.default.removeItem(at: stateURL)
+        }
+
+        setenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH", wrapperURL.path, 1)
+        defer { unsetenv("DEXCRAFT_EMBEDDED_RUNTIME_PATH") }
+
+        let tinyModelPath = makeInvalidModelFile()
+        defer { try? FileManager.default.removeItem(atPath: tinyModelPath) }
+
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        var settings = viewModel.connectedModelSettings
+        settings.useEmbeddedTinyModel = true
+        settings.useEmbeddedFallbackModel = true
+        settings.embeddedTinyModelPath = tinyModelPath
+        settings.embeddedFallbackModelPath = nil
+        viewModel.updateConnectedModelSettings(settings)
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .claude
+        viewModel.selectedScenarioProfile = .generalAssistant
+        viewModel.roughInput = "Design a website that explains how cool my dog is."
+        viewModel.forgePrompt()
+
+        XCTAssertFalse(viewModel.generatedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertTrue(viewModel.statusMessage.isEmpty)
+        XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("fallback model"))
+        XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("returned unusable output"))
+        XCTAssertFalse(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("fallback model unavailable"))
+    }
+
+    func testForgePromptEdgeInputsAlwaysProduceNonEmptyOutput() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.autoOptimizePrompt = true
+        viewModel.selectedTarget = .geminiChatGPT
+        viewModel.selectedScenarioProfile = .generalAssistant
+
+        let edgeInputs = [
+            "a",
+            "???",
+            "make it better",
+            "### Goal\nShip",
+            "Goal: x\nContext: y\nConstraints: none",
+            "Need this done.\n- fast\n- safe\n- testable"
+        ]
+
+        for input in edgeInputs {
+            viewModel.roughInput = input
+            viewModel.forgePrompt()
+            XCTAssertFalse(
+                viewModel.generatedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                "Generated prompt should never be empty for input: \(input)"
+            )
+        }
+    }
+
     func testTinyShortOutputCanStillApplyViaGoalRefinementFallback() throws {
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("dexcraft-short-output-runtime-\(UUID().uuidString).sh")

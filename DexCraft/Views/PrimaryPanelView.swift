@@ -126,9 +126,7 @@ struct PrimaryPanelView: View {
             if viewModel.isEmbeddedTinyModelEnabled && !viewModel.tinyModelStatus.isEmpty {
                 Text(viewModel.tinyModelStatus)
                     .font(.caption2)
-                    .foregroundStyle(
-                        viewModel.tinyModelStatus.localizedCaseInsensitiveContains("applied") ? .green : .yellow
-                    )
+                    .foregroundStyle(tinyStatusColor)
                     .lineLimit(2)
             }
 
@@ -184,6 +182,17 @@ struct PrimaryPanelView: View {
         }
         .padding(10)
         .glassCard()
+    }
+
+    private var tinyStatusColor: Color {
+        let normalized = viewModel.tinyModelStatus.lowercased()
+        if normalized.contains("pass applied") {
+            return .green
+        }
+        if normalized.contains("unavailable") || normalized.contains("failed") {
+            return .yellow
+        }
+        return .secondary
     }
 
     private var roughInputEditor: some View {
