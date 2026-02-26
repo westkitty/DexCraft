@@ -4,6 +4,25 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 final class PromptEngineViewModel: ObservableObject {
+    enum LocalChatRole {
+        case user
+        case assistant
+    }
+
+    struct LocalChatMessage: Identifiable {
+        let id: UUID
+        let role: LocalChatRole
+        let content: String
+        let createdAt: Date
+
+        init(id: UUID = UUID(), role: LocalChatRole, content: String, createdAt: Date = Date()) {
+            self.id = id
+            self.role = role
+            self.content = content
+            self.createdAt = createdAt
+        }
+    }
+
     enum IDEExportFormat: String, CaseIterable, Identifiable {
         case cursorRules = ".cursorrules"
         case copilotInstructions = "copilot-instructions.md"
@@ -87,6 +106,11 @@ final class PromptEngineViewModel: ObservableObject {
     @Published private(set) var optimizationSuggestedTopP: Double?
     @Published private(set) var optimizationSuggestedMaxTokens: Int?
     @Published private(set) var tinyModelStatus: String = ""
+    @Published private(set) var localChatMessages: [LocalChatMessage] = []
+    @Published var localChatInput: String = ""
+    @Published private(set) var localChatStatus: String = ""
+    @Published private(set) var isLocalChatGenerating: Bool = false
+    @Published private(set) var isLocalChatWindowActive: Bool = false
 
     @Published private(set) var templates: [PromptTemplate] = []
     @Published private(set) var history: [PromptHistoryEntry] = []
@@ -104,6 +128,7 @@ final class PromptEngineViewModel: ObservableObject {
 
     var onRevealStateChanged: ((Bool) -> Void)?
     var onDetachedWindowToggleRequested: (() -> Void)?
+    var onLocalChatWindowToggleRequested: (() -> Void)?
 
     private let storageManager: StorageManager
     private let promptLibraryRepository: PromptLibraryRepository
@@ -688,6 +713,14 @@ final class PromptEngineViewModel: ObservableObject {
             options: options,
             notes: &fallbackNotes
         )
+        selectedFinalPrompt = enforceMeaningfulEnhancement(
+            rawInput: resolvedInput,
+            candidate: selectedFinalPrompt,
+            compiledPrompt: compiledFinalPrompt,
+            ir: selectedIR,
+            options: options,
+            notes: &fallbackNotes
+        )
 
         finalPrompt = selectedFinalPrompt
         generatedPrompt = selectedFinalPrompt
@@ -802,6 +835,89 @@ final class PromptEngineViewModel: ObservableObject {
 
         notes.append("Raw input fallback was unexpectedly empty; using static fallback prompt.")
         return "Provide a clear task, constraints, and expected output format."
+    }
+
+    private func enforceMeaningfulEnhancement(
+        rawInput: String,
+        candidate: String,
+        compiledPrompt: String,
+        ir: PromptIR,
+        options: EnhancementOptions,
+        notes: inout [String]
+    ) -> String {
+        guard autoOptimizePrompt else {
+            return candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard connectedModelSettings.isEmbeddedTinyModelEnabled else {
+            return candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let normalizedTinyStatus = tinyModelStatus.lowercased()
+        let shouldForceEnhancement =
+            normalizedTinyStatus.contains("kept heuristic result") ||
+            normalizedTinyStatus.contains("output failed") ||
+            normalizedTinyStatus.contains("returned unusable output") ||
+            normalizedTinyStatus.contains("unavailable") ||
+            normalizedTinyStatus.contains("failed")
+        guard shouldForceEnhancement else {
+            return candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let trimmedRaw = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCandidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCompiled = compiledPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedRaw.isEmpty, !trimmedCandidate.isEmpty else {
+            return trimmedCandidate
+        }
+
+        guard isNearDuplicateOutput(lhs: trimmedRaw, rhs: trimmedCandidate) else {
+            return trimmedCandidate
+        }
+
+        guard !trimmedCompiled.isEmpty else {
+            return trimmedCandidate
+        }
+        guard normalizeLineForDedupe(trimmedCompiled) != normalizeLineForDedupe(trimmedRaw) else {
+            return trimmedCandidate
+        }
+
+        let compiledValidation = validate(finalPrompt: trimmedCompiled, ir: ir, options: options)
+        guard compiledValidation.isValid else {
+            notes.append("Near-duplicate output detected, but compiled enhancement fallback failed validation.")
+            return trimmedCandidate
+        }
+
+        notes.append("Output was near-identical to input; switched to compiled enhancement fallback.")
+        return trimmedCompiled
+    }
+
+    private func isNearDuplicateOutput(lhs: String, rhs: String) -> Bool {
+        if normalizeLineForDedupe(lhs) == normalizeLineForDedupe(rhs) {
+            return true
+        }
+
+        let maxLength = max(lhs.count, rhs.count)
+        guard maxLength > 0 else { return true }
+        let lengthDelta = Double(abs(lhs.count - rhs.count)) / Double(maxLength)
+        guard lengthDelta <= 0.12 else { return false }
+
+        let tokenSet = { (text: String) -> Set<String> in
+            Set(
+                text
+                    .lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { $0.count >= 3 }
+            )
+        }
+
+        let lhsTokens = tokenSet(lhs)
+        let rhsTokens = tokenSet(rhs)
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return false }
+
+        let overlap = lhsTokens.intersection(rhsTokens)
+        let similarity = Double(overlap.count) / Double(max(lhsTokens.count, rhsTokens.count))
+        return similarity >= 0.93
     }
 
     func copyToClipboard() {
@@ -1392,6 +1508,72 @@ final class PromptEngineViewModel: ObservableObject {
         isDetachedWindowActive = active
     }
 
+    func requestLocalChatWindowToggle() {
+        onLocalChatWindowToggleRequested?()
+    }
+
+    func setLocalChatWindowActive(_ active: Bool) {
+        isLocalChatWindowActive = active
+    }
+
+    func clearLocalChat() {
+        localChatMessages.removeAll()
+        localChatStatus = ""
+    }
+
+    func applyLocalChatMessageToRoughInput(_ messageID: UUID, forgeImmediately: Bool) {
+        guard let message = localChatMessages.first(where: { $0.id == messageID }) else { return }
+        roughInput = message.content
+        statusMessage = "Applied local chat response to Rough Input."
+        if forgeImmediately {
+            forgePrompt()
+        }
+    }
+
+    func sendLocalChatMessage() {
+        let trimmedInput = localChatInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInput.isEmpty else {
+            localChatStatus = "Enter a message before sending."
+            return
+        }
+        guard connectedModelSettings.isEmbeddedTinyModelEnabled else {
+            localChatStatus = "Enable Tiny LLM to use local chat."
+            return
+        }
+        guard !isLocalChatGenerating else { return }
+
+        let userMessage = LocalChatMessage(role: .user, content: trimmedInput)
+        localChatMessages.append(userMessage)
+        localChatInput = ""
+        localChatStatus = ""
+        isLocalChatGenerating = true
+
+        let conversation = localChatMessages
+        let settingsSnapshot = connectedModelSettings
+        let scenarioSnapshot = selectedScenarioProfile
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try self.generateLocalChatReply(
+                    conversation: conversation,
+                    settings: settingsSnapshot,
+                    scenario: scenarioSnapshot
+                )
+                DispatchQueue.main.async {
+                    self.localChatMessages.append(LocalChatMessage(role: .assistant, content: reply))
+                    self.localChatStatus = "Local model reply received."
+                    self.isLocalChatGenerating = false
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.localChatStatus = "Local chat failed: \(error.localizedDescription)"
+                    self.isLocalChatGenerating = false
+                }
+            }
+        }
+    }
+
     var optimizationParameterSummary: String {
         guard autoOptimizePrompt else {
             return "Auto-optimize is disabled."
@@ -1412,6 +1594,34 @@ final class PromptEngineViewModel: ObservableObject {
             return finalPrompt
         }
         return extractUserFacingPrompt(from: generatedPrompt)
+    }
+
+    private func generateLocalChatReply(
+        conversation: [LocalChatMessage],
+        settings: ConnectedModelSettings,
+        scenario: ScenarioProfile
+    ) throws -> String {
+        let recentMessages = Array(conversation.suffix(16))
+        let transcript = recentMessages
+            .map { message in
+                let speaker = message.role == .user ? "User" : "Assistant"
+                return "\(speaker): \(message.content)"
+            }
+            .joined(separator: "\n")
+
+        let request = EmbeddedTinyChatRequest(
+            transcript: transcript,
+            scenario: scenario,
+            maxTokens: 520
+        )
+        let tier: EmbeddedLocalModelTier = settings.isEmbeddedFallbackModelEnabled ? .fallbackSecondary : .tinyPrimary
+        let result = try embeddedTinyLLMService.chat(
+            request: request,
+            settings: settings,
+            tier: tier
+        )
+
+        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func refreshPromptLibraryState() {

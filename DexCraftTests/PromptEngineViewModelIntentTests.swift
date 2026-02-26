@@ -445,7 +445,13 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         viewModel.roughInput = "Design a website that explains how cool my dog is."
         viewModel.forgePrompt()
 
-        XCTAssertFalse(viewModel.generatedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let generated = viewModel.generatedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = viewModel.roughInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(generated.isEmpty)
+        XCTAssertNotEqual(
+            generated.lowercased().replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression),
+            original.lowercased().replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        )
         XCTAssertTrue(viewModel.statusMessage.isEmpty)
         XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("fallback model"))
         XCTAssertTrue(viewModel.tinyModelStatus.localizedCaseInsensitiveContains("returned unusable output"))

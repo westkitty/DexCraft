@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var toggleDrawerMenuItem: NSMenuItem!
     private var popover: NSPopover!
     private var detachedWindow: NSPanel?
+    private var localChatWindow: NSPanel?
     private var globalMonitor: Any?
     private var localMonitor: Any?
 
@@ -21,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         vm.onDetachedWindowToggleRequested = { [weak self] in
             self?.toggleDetachedWindow()
+        }
+        vm.onLocalChatWindowToggleRequested = { [weak self] in
+            self?.toggleLocalChatWindow()
         }
         return vm
     }()
@@ -209,6 +213,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func toggleLocalChatWindow() {
+        if localChatWindow == nil {
+            openLocalChatWindow()
+        } else {
+            closeLocalChatWindow()
+        }
+    }
+
     private func openDetachedWindow() {
         if popover.isShown {
             popover.performClose(nil)
@@ -258,15 +270,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func openLocalChatWindow() {
+        let rect = NSRect(x: 0, y: 0, width: 460, height: 640)
+        let panel = NSPanel(
+            contentRect: rect,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.title = "DexCraft Local Chat"
+        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.titlebarAppearsTransparent = true
+        panel.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+        panel.minSize = NSSize(width: 420, height: 520)
+        panel.delegate = self
+        panel.isReleasedWhenClosed = false
+        panel.contentViewController = NSHostingController(
+            rootView: LocalChatPanelView(viewModel: viewModel)
+        )
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        localChatWindow = panel
+        viewModel.setLocalChatWindowActive(true)
+    }
+
+    private func closeLocalChatWindow() {
+        guard let window = localChatWindow else { return }
+        window.close()
+    }
+
     func windowWillClose(_ notification: Notification) {
-        guard let closingWindow = notification.object as? NSWindow,
-              closingWindow == detachedWindow
-        else {
-            return
+        guard let closingWindow = notification.object as? NSWindow else { return }
+
+        if closingWindow == detachedWindow {
+            detachedWindow = nil
+            viewModel.setDetachedWindowActive(false)
         }
 
-        detachedWindow = nil
-        viewModel.setDetachedWindowActive(false)
+        if closingWindow == localChatWindow {
+            localChatWindow = nil
+            viewModel.setLocalChatWindowActive(false)
+        }
     }
 
     private func updateDetachedWindowMinimumSize(expanded: Bool) {
@@ -301,5 +352,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             window.setFrame(frame, display: true)
         }
+    }
+}
+
+private struct LocalChatPanelView: View {
+    @ObservedObject var viewModel: PromptEngineViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Local Prompt Chat")
+                    .font(.headline)
+                Spacer()
+                Button("Clear") {
+                    viewModel.clearLocalChat()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.localChatMessages) { message in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(message.role == .user ? "You" : "Local LLM")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(message.content)
+                                .font(.system(size: 13))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if message.role == .assistant {
+                                HStack(spacing: 6) {
+                                    Button("Use as Rough Input") {
+                                        viewModel.applyLocalChatMessageToRoughInput(message.id, forgeImmediately: false)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+
+                                    Button("Use + Forge") {
+                                        viewModel.applyLocalChatMessageToRoughInput(message.id, forgeImmediately: true)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+                        .padding(8)
+                        .background(Color.white.opacity(message.role == .user ? 0.08 : 0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Ask the local model to help craft your prompt…", text: $viewModel.localChatInput, axis: .vertical)
+                    .lineLimit(1...4)
+                    .textFieldStyle(.roundedBorder)
+
+                Button {
+                    viewModel.sendLocalChatMessage()
+                } label: {
+                    if viewModel.isLocalChatGenerating {
+                        ProgressView()
+                    } else {
+                        Text("Send")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isLocalChatGenerating)
+            }
+
+            if !viewModel.localChatStatus.isEmpty {
+                Text(viewModel.localChatStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(14)
+        .frame(minWidth: 420, minHeight: 520, alignment: .topLeading)
+        .background(.ultraThinMaterial)
     }
 }

@@ -78,6 +78,17 @@ struct PrimaryPanelView: View {
             }
             .buttonStyle(.bordered)
 
+            Button {
+                viewModel.requestLocalChatWindowToggle()
+            } label: {
+                Label(
+                    viewModel.isLocalChatWindowActive ? "Close Chat" : "Chat Pop Out",
+                    systemImage: viewModel.isLocalChatWindowActive ? "message.fill" : "message"
+                )
+                .font(.caption)
+            }
+            .buttonStyle(.bordered)
+
             Text("Offline")
                 .font(.caption)
                 .padding(.horizontal, 8)

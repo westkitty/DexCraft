@@ -325,6 +325,12 @@ struct EmbeddedTinyModelRequest {
     let maxTokens: Int
 }
 
+struct EmbeddedTinyChatRequest {
+    let transcript: String
+    let scenario: ScenarioProfile
+    let maxTokens: Int
+}
+
 enum EmbeddedLocalModelTier: String {
     case tinyPrimary
     case fallbackSecondary
@@ -383,6 +389,39 @@ final class EmbeddedTinyLLMService {
         settings: ConnectedModelSettings,
         tier: EmbeddedLocalModelTier = .tinyPrimary
     ) throws -> EmbeddedTinyModelResult {
+        try runModel(
+            settings: settings,
+            tier: tier,
+            maxTokens: request.maxTokens,
+            systemPrompt: renderSystemPrompt(),
+            prompt: renderPrompt(request: request),
+            extractor: extractMarkedOutput(from:)
+        )
+    }
+
+    func chat(
+        request: EmbeddedTinyChatRequest,
+        settings: ConnectedModelSettings,
+        tier: EmbeddedLocalModelTier = .fallbackSecondary
+    ) throws -> EmbeddedTinyModelResult {
+        try runModel(
+            settings: settings,
+            tier: tier,
+            maxTokens: request.maxTokens,
+            systemPrompt: renderChatSystemPrompt(),
+            prompt: renderChatPrompt(request: request),
+            extractor: extractChatOutput(from:)
+        )
+    }
+
+    private func runModel(
+        settings: ConnectedModelSettings,
+        tier: EmbeddedLocalModelTier,
+        maxTokens: Int,
+        systemPrompt: String,
+        prompt: String,
+        extractor: (String) -> String
+    ) throws -> EmbeddedTinyModelResult {
         let runtimePath = try resolveRuntimePath()
         let runtimeDirectoryPath = (runtimePath as NSString).deletingLastPathComponent
         let modelPath = try resolveModelPath(from: settings, tier: tier)
@@ -392,9 +431,11 @@ final class EmbeddedTinyLLMService {
         process.executableURL = URL(fileURLWithPath: runtimePath)
         process.currentDirectoryURL = URL(fileURLWithPath: runtimeDirectoryPath)
         process.arguments = buildArguments(
-            request: request,
             modelPath: modelPath,
-            tier: tier
+            tier: tier,
+            requestedMaxTokens: maxTokens,
+            systemPrompt: systemPrompt,
+            prompt: prompt
         )
         var environment = ProcessInfo.processInfo.environment
         let existingDyldPath = environment["DYLD_LIBRARY_PATH"] ?? ""
@@ -442,7 +483,7 @@ final class EmbeddedTinyLLMService {
             throw EmbeddedTinyModelError.invalidOutput(tier: tier)
         }
 
-        let cleaned = extractMarkedOutput(from: output)
+        let cleaned = extractor(output)
         guard !cleaned.isEmpty else {
             throw EmbeddedTinyModelError.invalidOutput(tier: tier)
         }
@@ -458,13 +499,13 @@ final class EmbeddedTinyLLMService {
     }
 
     private func buildArguments(
-        request: EmbeddedTinyModelRequest,
         modelPath: String,
-        tier: EmbeddedLocalModelTier
+        tier: EmbeddedLocalModelTier,
+        requestedMaxTokens: Int,
+        systemPrompt: String,
+        prompt: String
     ) -> [String] {
-        let systemPrompt = renderSystemPrompt()
-        let prompt = renderPrompt(request: request)
-        let generation = generationConfig(for: tier, requestedMaxTokens: request.maxTokens)
+        let generation = generationConfig(for: tier, requestedMaxTokens: requestedMaxTokens)
         return [
             "-m", modelPath,
             "--conversation",
@@ -546,6 +587,25 @@ final class EmbeddedTinyLLMService {
         """
     }
 
+    private func renderChatSystemPrompt() -> String {
+        """
+        You are DexCraft's local prompt coach.
+        Help the user create stronger prompts with clear scope, constraints, and deliverables.
+        Keep responses practical and concise.
+        Ask direct clarifying questions when required details are missing.
+        """
+    }
+
+    private func renderChatPrompt(request: EmbeddedTinyChatRequest) -> String {
+        """
+        Scenario: \(request.scenario.rawValue)
+        Conversation:
+        \(request.transcript)
+
+        Respond as Assistant with one concise reply.
+        """
+    }
+
     private func extractMarkedOutput(from text: String) -> String {
         let normalized = text
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -615,6 +675,48 @@ final class EmbeddedTinyLLMService {
 
         let quoted = String(text[captureRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         return quoted.isEmpty ? nil : quoted
+    }
+
+    private func extractChatOutput(from text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+
+        if
+            let start = normalized.range(of: "<assistant>", options: [.caseInsensitive]),
+            let end = normalized.range(
+                of: "</assistant>",
+                options: [.caseInsensitive],
+                range: start.upperBound..<normalized.endIndex
+            )
+        {
+            let tagged = normalized[start.upperBound..<end.lowerBound]
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tagged.isEmpty {
+                return tagged
+            }
+        }
+
+        var lines = normalized
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != "[end of text]" }
+
+        if let first = lines.first {
+            let lowered = first.lowercased()
+            if lowered.hasPrefix("assistant:") {
+                lines[0] = String(first.dropFirst("assistant:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if lowered == "assistant" {
+                lines.removeFirst()
+            }
+        }
+
+        return lines
+            .joined(separator: "\n")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func isTinyMetaLine(_ line: String) -> Bool {
