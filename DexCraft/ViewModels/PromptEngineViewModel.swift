@@ -61,6 +61,23 @@ final class PromptEngineViewModel: ObservableObject {
     @Published var showDebugReport: Bool = false
     @Published var statusMessage: String = ""
     @Published var templateNameDraft: String = ""
+    @Published var templateCategoryDraft: String = PromptTemplate.uncategorizedCategory
+    @Published var templateTagsDraft: String = ""
+    @Published var templateSearchQuery: String = "" {
+        didSet { scheduleTemplateVisibilityRefresh() }
+    }
+    @Published var templateCategoryFilter: String? = nil {
+        didSet { scheduleTemplateVisibilityRefresh() }
+    }
+    @Published var templateTargetFilter: PromptTarget? = nil {
+        didSet { scheduleTemplateVisibilityRefresh() }
+    }
+    @Published var templateSortOption: TemplateSortOption = .recentlyUpdated {
+        didSet { scheduleTemplateVisibilityRefresh() }
+    }
+    @Published private(set) var visibleTemplates: [PromptTemplate] = []
+    @Published private(set) var templateOverwriteCandidateName: String = ""
+    @Published var isTemplateOverwriteConfirmationPresented: Bool = false
     @Published var preferredIDEExportFormat: IDEExportFormat = .cursorRules
     @Published private(set) var isDetachedWindowActive: Bool = false
     @Published private(set) var optimizationAppliedRules: [String] = []
@@ -94,6 +111,11 @@ final class PromptEngineViewModel: ObservableObject {
     private let embeddedTinyLLMService = EmbeddedTinyLLMService()
     private let variableRegex: NSRegularExpression = PromptEngineViewModel.compileVariableRegex()
     private var learnedHeuristicWeights: HeuristicScoringWeights?
+    private var templateVisibilityTask: Task<Void, Never>?
+    private let templateFilterDebounceNanoseconds: UInt64 = 200_000_000
+    private var pendingOverwriteTemplateID: UUID?
+    private var pendingOverwriteContent: String?
+    private var pendingOverwriteTarget: PromptTarget?
 
     private let noFillerConstraint = "Respond only with the requested output. Do not apologize or use conversational filler."
     private let markdownConstraint = "Use strict markdown structure and headings exactly as specified."
@@ -251,7 +273,20 @@ final class PromptEngineViewModel: ObservableObject {
             }
         }
 
+        visibleTemplates = computeVisibleTemplates(
+            templates: templates,
+            query: templateSearchQuery,
+            categoryFilter: templateCategoryFilter,
+            targetFilter: templateTargetFilter,
+            sort: templateSortOption,
+            locale: .autoupdatingCurrent
+        )
+
         refreshPromptLibraryState()
+    }
+
+    deinit {
+        templateVisibilityTask?.cancel()
     }
 
     func updateConnectedModelSettings(_ settings: ConnectedModelSettings) {
@@ -797,42 +832,258 @@ final class PromptEngineViewModel: ObservableObject {
         }
     }
 
-    func saveCurrentAsTemplate() {
+    enum TemplateSaveResult: Equatable {
+        case saved
+        case requiresOverwriteConfirmation
+        case validationFailed
+    }
+
+    @discardableResult
+    func saveCurrentAsTemplate() -> TemplateSaveResult {
+        saveCurrentAsTemplate(
+            category: templateCategoryDraft,
+            tags: parsedTags(from: templateTagsDraft)
+        )
+    }
+
+    @discardableResult
+    func saveCurrentAsTemplate(category: String, tags: [String]) -> TemplateSaveResult {
         let name = templateNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = roughInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !name.isEmpty else {
             statusMessage = "Template name is required."
-            return
+            return .validationFailed
         }
 
         guard !body.isEmpty else {
             statusMessage = "Cannot save an empty template."
+            return .validationFailed
+        }
+
+        if let existing = templates.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            pendingOverwriteTemplateID = existing.id
+            pendingOverwriteContent = roughInput
+            pendingOverwriteTarget = selectedTarget
+            templateOverwriteCandidateName = existing.name
+            isTemplateOverwriteConfirmationPresented = true
+            statusMessage = "Template \"\(existing.name)\" already exists. Confirm overwrite."
+            return .requiresOverwriteConfirmation
+        }
+
+        let now = Date()
+        let normalizedCategory = normalizedCategoryName(category)
+        let normalizedTags = normalizedTags(tags)
+        let newTemplate = PromptTemplate(
+            name: name,
+            content: roughInput,
+            target: selectedTarget,
+            createdAt: now,
+            category: normalizedCategory,
+            tags: normalizedTags,
+            updatedAt: now
+        )
+
+        templates.insert(newTemplate, at: 0)
+        templateNameDraft = ""
+        templateCategoryDraft = normalizedCategory
+        templateTagsDraft = normalizedTags.joined(separator: ", ")
+        persistTemplatesAndRefresh()
+        statusMessage = "Template saved."
+        return .saved
+    }
+
+    func confirmTemplateOverwrite() {
+        defer {
+            pendingOverwriteTemplateID = nil
+            pendingOverwriteContent = nil
+            pendingOverwriteTarget = nil
+            templateOverwriteCandidateName = ""
+            isTemplateOverwriteConfirmationPresented = false
+        }
+
+        guard
+            let templateID = pendingOverwriteTemplateID,
+            let content = pendingOverwriteContent,
+            let target = pendingOverwriteTarget,
+            let index = templates.firstIndex(where: { $0.id == templateID })
+        else {
+            statusMessage = "Overwrite cancelled: template no longer exists."
             return
         }
 
-        if let index = templates.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            templates[index].content = roughInput
-            templates[index].target = selectedTarget
-        } else {
-            templates.insert(PromptTemplate(name: name, content: roughInput, target: selectedTarget), at: 0)
-        }
+        templates[index].content = content
+        templates[index].target = target
+        templates[index].updatedAt = Date()
+        templateNameDraft = templates[index].name
+        persistTemplatesAndRefresh()
+        statusMessage = "Template overwritten."
+    }
 
-        templateNameDraft = ""
-        storageManager.saveTemplates(templates)
-        statusMessage = "Template saved."
+    func cancelTemplateOverwrite() {
+        pendingOverwriteTemplateID = nil
+        pendingOverwriteContent = nil
+        pendingOverwriteTarget = nil
+        templateOverwriteCandidateName = ""
+        isTemplateOverwriteConfirmationPresented = false
+        statusMessage = "Overwrite cancelled."
     }
 
     func applyTemplate(_ template: PromptTemplate) {
         roughInput = template.content
         selectedTarget = template.target
+        templateNameDraft = template.name
+        templateCategoryDraft = template.category
+        templateTagsDraft = template.tags.joined(separator: ", ")
         activeTab = .enhance
         statusMessage = "Template loaded: \(template.name)"
     }
 
     func deleteTemplate(_ template: PromptTemplate) {
         templates.removeAll { $0.id == template.id }
-        storageManager.saveTemplates(templates)
+        persistTemplatesAndRefresh()
+        statusMessage = "Template deleted."
+    }
+
+    func duplicateTemplate(_ template: PromptTemplate) {
+        let now = Date()
+        let duplicatedName = nextDuplicateTemplateName(for: template.name)
+        let duplicatedTemplate = PromptTemplate(
+            name: duplicatedName,
+            content: template.content,
+            target: template.target,
+            createdAt: now,
+            category: template.category,
+            tags: template.tags,
+            updatedAt: now
+        )
+
+        templates.insert(duplicatedTemplate, at: 0)
+        persistTemplatesAndRefresh()
+        statusMessage = "Template duplicated as \"\(duplicatedName)\"."
+    }
+
+    func updateTemplateMetadata(templateID: UUID, category: String, tags: [String], target: PromptTarget) {
+        guard let index = templates.firstIndex(where: { $0.id == templateID }) else {
+            statusMessage = "Template not found."
+            return
+        }
+
+        templates[index].category = normalizedCategoryName(category)
+        templates[index].tags = normalizedTags(tags)
+        templates[index].target = target
+        templates[index].updatedAt = Date()
+        persistTemplatesAndRefresh()
+        statusMessage = "Template metadata updated."
+    }
+
+    func importBundledDefaultTemplates() {
+        guard let url = Bundle.main.url(forResource: "DefaultTemplates", withExtension: "json") else {
+            statusMessage = "Bundled defaults not found."
+            return
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let defaults = try decoder.decode([PromptTemplate].self, from: data)
+            let addedCount = importDefaultTemplates(defaults)
+            statusMessage = addedCount == 0
+                ? "Defaults already imported. Added 0 templates."
+                : "Imported \(addedCount) default templates."
+        } catch {
+            statusMessage = "Failed to import defaults: \(error.localizedDescription)"
+        }
+    }
+
+    @discardableResult
+    func importDefaultTemplates(_ defaults: [PromptTemplate]) -> Int {
+        var knownKeys = Set(templates.map { normalizedTemplateKey(for: $0.name) })
+        var addedCount = 0
+
+        for template in defaults {
+            let key = normalizedTemplateKey(for: template.name)
+            guard knownKeys.insert(key).inserted else {
+                continue
+            }
+            templates.append(template)
+            addedCount += 1
+        }
+
+        if addedCount > 0 {
+            persistTemplatesAndRefresh()
+        } else {
+            scheduleTemplateVisibilityRefresh(debounced: false)
+        }
+        return addedCount
+    }
+
+    var templateCategories: [String] {
+        var ordered: [String] = [PromptTemplate.uncategorizedCategory]
+        var seen = Set<String>([PromptTemplate.uncategorizedCategory.lowercased()])
+
+        for template in templates {
+            let normalized = normalizedCategoryName(template.category)
+            let key = normalized.lowercased()
+            if seen.insert(key).inserted {
+                ordered.append(normalized)
+            }
+        }
+
+        let head = [PromptTemplate.uncategorizedCategory]
+        let tail = ordered.dropFirst().sorted {
+            $0.compare($1, options: [.caseInsensitive, .diacriticInsensitive], range: nil, locale: .autoupdatingCurrent) == .orderedAscending
+        }
+        return head + tail
+    }
+
+    func templateCount(forCategory category: String) -> Int {
+        templates.filter { $0.category.caseInsensitiveCompare(category) == .orderedSame }.count
+    }
+
+    func renameTemplateCategory(from source: String, to destination: String) {
+        let normalizedSource = normalizedCategoryName(source)
+        let normalizedDestination = normalizedCategoryName(destination)
+        guard normalizedSource.caseInsensitiveCompare(normalizedDestination) != .orderedSame else {
+            statusMessage = "Category names are the same."
+            return
+        }
+
+        let before = templates
+        templates = TemplateCategoryOperations.renameCategory(templates: templates, from: normalizedSource, to: normalizedDestination)
+        stampUpdatedAtForCategoryChanges(from: before, to: &templates)
+        persistTemplatesAndRefresh()
+        statusMessage = "Category renamed: \(normalizedSource) → \(normalizedDestination)."
+    }
+
+    func mergeTemplateCategory(source: String, destination: String) {
+        let normalizedSource = normalizedCategoryName(source)
+        let normalizedDestination = normalizedCategoryName(destination)
+        guard normalizedSource.caseInsensitiveCompare(normalizedDestination) != .orderedSame else {
+            statusMessage = "Choose two different categories to merge."
+            return
+        }
+
+        let before = templates
+        templates = TemplateCategoryOperations.mergeCategory(templates: templates, source: normalizedSource, destination: normalizedDestination)
+        stampUpdatedAtForCategoryChanges(from: before, to: &templates)
+        persistTemplatesAndRefresh()
+        statusMessage = "Merged \(normalizedSource) into \(normalizedDestination)."
+    }
+
+    func deleteTemplateCategory(_ category: String) {
+        let normalizedCategory = normalizedCategoryName(category)
+        guard normalizedCategory.caseInsensitiveCompare(PromptTemplate.uncategorizedCategory) != .orderedSame else {
+            statusMessage = "Cannot delete Uncategorized."
+            return
+        }
+
+        let before = templates
+        templates = TemplateCategoryOperations.deleteCategory(templates: templates, category: normalizedCategory)
+        stampUpdatedAtForCategoryChanges(from: before, to: &templates)
+        persistTemplatesAndRefresh()
+        statusMessage = "Deleted category \(normalizedCategory). Templates moved to Uncategorized."
     }
 
     func loadHistoryEntry(_ entry: PromptHistoryEntry) {
@@ -866,6 +1117,110 @@ final class PromptEngineViewModel: ObservableObject {
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+
+    private func scheduleTemplateVisibilityRefresh(debounced: Bool = true) {
+        templateVisibilityTask?.cancel()
+
+        let templatesSnapshot = templates
+        let querySnapshot = templateSearchQuery
+        let categoryFilterSnapshot = templateCategoryFilter
+        let targetFilterSnapshot = templateTargetFilter
+        let sortSnapshot = templateSortOption
+        let delay = debounced ? templateFilterDebounceNanoseconds : 0
+
+        templateVisibilityTask = Task { [weak self] in
+            guard let self else { return }
+
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: delay)
+            }
+
+            guard !Task.isCancelled else { return }
+
+            let computed = await Task.detached(priority: .userInitiated) {
+                computeVisibleTemplates(
+                    templates: templatesSnapshot,
+                    query: querySnapshot,
+                    categoryFilter: categoryFilterSnapshot,
+                    targetFilter: targetFilterSnapshot,
+                    sort: sortSnapshot,
+                    locale: .autoupdatingCurrent
+                )
+            }.value
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self.visibleTemplates = computed
+            }
+        }
+    }
+
+    private func persistTemplatesAndRefresh() {
+        storageManager.saveTemplates(templates)
+        scheduleTemplateVisibilityRefresh(debounced: false)
+    }
+
+    private func normalizedCategoryName(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? PromptTemplate.uncategorizedCategory : trimmed
+    }
+
+    private func parsedTags(from rawValue: String) -> [String] {
+        normalizedTags(
+            rawValue
+                .replacingOccurrences(of: "\n", with: ",")
+                .split(separator: ",")
+                .map { String($0) }
+        )
+    }
+
+    private func normalizedTags(_ tags: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalized: [String] = []
+
+        for tag in tags {
+            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = trimmed.lowercased()
+            if seen.insert(key).inserted {
+                normalized.append(trimmed)
+            }
+        }
+
+        return normalized
+    }
+
+    private func normalizedTemplateKey(for name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func nextDuplicateTemplateName(for baseName: String) -> String {
+        let trimmed = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = trimmed.isEmpty ? "Template" : trimmed
+        var candidate = "\(root) Copy"
+        var suffix = 2
+        let existingNames = Set(templates.map { normalizedTemplateKey(for: $0.name) })
+
+        while existingNames.contains(normalizedTemplateKey(for: candidate)) {
+            candidate = "\(root) Copy \(suffix)"
+            suffix += 1
+        }
+
+        return candidate
+    }
+
+    private func stampUpdatedAtForCategoryChanges(from before: [PromptTemplate], to templates: inout [PromptTemplate]) {
+        let beforeByID = Dictionary(uniqueKeysWithValues: before.map { ($0.id, $0) })
+        let now = Date()
+
+        for index in templates.indices {
+            guard let prior = beforeByID[templates[index].id] else { continue }
+            let categoryChanged = prior.category.caseInsensitiveCompare(templates[index].category) != .orderedSame
+            if categoryChanged {
+                templates[index].updatedAt = now
+            }
+        }
     }
 
     var filteredPromptLibraryPrompts: [PromptLibraryItem] {

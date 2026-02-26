@@ -1,18 +1,120 @@
 import Foundation
 
 struct PromptTemplate: Codable, Identifiable {
+    static var migrationNow: () -> Date = { Date() }
+    static let uncategorizedCategory = "Uncategorized"
+
     let id: UUID
     var name: String
     var content: String
     var target: PromptTarget
     var createdAt: Date
+    var category: String
+    var tags: [String]
+    var updatedAt: Date
 
-    init(id: UUID = UUID(), name: String, content: String, target: PromptTarget, createdAt: Date = Date()) {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case content
+        case target
+        case createdAt
+        case category
+        case tags
+        case updatedAt
+    }
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        content: String,
+        target: PromptTarget,
+        createdAt: Date = Date(),
+        category: String = PromptTemplate.uncategorizedCategory,
+        tags: [String] = [],
+        updatedAt: Date? = nil
+    ) {
         self.id = id
         self.name = name
         self.content = content
         self.target = target
         self.createdAt = createdAt
+        self.category = PromptTemplate.normalizedCategory(category)
+        self.tags = PromptTemplate.normalizedTags(tags)
+        self.updatedAt = updatedAt ?? createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = (try? container.decode(UUID.self, forKey: .id)) ?? UUID()
+        name = (try? container.decode(String.self, forKey: .name)) ?? "Untitled Template"
+        content = (try? container.decode(String.self, forKey: .content)) ?? ""
+        target = (try? container.decode(PromptTarget.self, forKey: .target)) ?? .claude
+
+        let migratedCreatedAt = PromptTemplate.decodeDate(from: container, forKey: .createdAt) ?? PromptTemplate.migrationNow()
+        createdAt = migratedCreatedAt
+        updatedAt = PromptTemplate.decodeDate(from: container, forKey: .updatedAt) ?? migratedCreatedAt
+
+        let rawCategory = (try? container.decode(String.self, forKey: .category)) ?? PromptTemplate.uncategorizedCategory
+        category = PromptTemplate.normalizedCategory(rawCategory)
+        tags = PromptTemplate.normalizedTags((try? container.decode([String].self, forKey: .tags)) ?? [])
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(content, forKey: .content)
+        try container.encode(target, forKey: .target)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(category, forKey: .category)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
+
+    private static func decodeDate(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Date? {
+        if let value = try? container.decode(Date.self, forKey: key) {
+            return value
+        }
+        if let rawString = try? container.decode(String.self, forKey: key) {
+            return parseISO8601Date(rawString)
+        }
+        return nil
+    }
+
+    private static func parseISO8601Date(_ rawValue: String) -> Date? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: trimmed) {
+            return date
+        }
+
+        let fallbackFormatter = ISO8601DateFormatter()
+        fallbackFormatter.formatOptions = [.withInternetDateTime]
+        return fallbackFormatter.date(from: trimmed)
+    }
+
+    private static func normalizedCategory(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? uncategorizedCategory : trimmed
+    }
+
+    private static func normalizedTags(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for tag in values {
+            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let lowered = trimmed.lowercased()
+            if seen.insert(lowered).inserted {
+                ordered.append(trimmed)
+            }
+        }
+        return ordered
     }
 
     static func defaultPresets() -> [PromptTemplate] {
@@ -226,4 +328,131 @@ struct PromptTemplate: Codable, Identifiable {
             )
         ]
     }
+}
+
+enum TemplateSortOption: String, CaseIterable, Codable, Identifiable {
+    case recentlyUpdated = "Recently Updated"
+    case recentlyCreated = "Recently Created"
+    case nameAscending = "Name (A-Z)"
+
+    var id: String { rawValue }
+}
+
+func computeVisibleTemplates(
+    templates: [PromptTemplate],
+    query: String,
+    categoryFilter: String?,
+    targetFilter: PromptTarget?,
+    sort: TemplateSortOption,
+    locale: Locale
+) -> [PromptTemplate] {
+    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let normalizedCategoryFilter = categoryFilter?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+    let filtered = templates.filter { template in
+        if let normalizedCategoryFilter {
+            let templateCategory = template.category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard templateCategory == normalizedCategoryFilter else { return false }
+        }
+
+        if let targetFilter {
+            guard template.target == targetFilter else { return false }
+        }
+
+        guard !normalizedQuery.isEmpty else { return true }
+
+        if template.name.lowercased().contains(normalizedQuery) {
+            return true
+        }
+
+        if template.category.lowercased().contains(normalizedQuery) {
+            return true
+        }
+
+        return template.tags.contains(where: { $0.lowercased().contains(normalizedQuery) })
+    }
+
+    let sorted = filtered.sorted { lhs, rhs in
+        switch sort {
+        case .recentlyUpdated:
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            let nameCompare = localizedCaseInsensitiveNameCompare(lhs.name, rhs.name, locale: locale)
+            if nameCompare != .orderedSame {
+                return nameCompare == .orderedAscending
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+
+        case .recentlyCreated:
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt > rhs.createdAt
+            }
+            let nameCompare = localizedCaseInsensitiveNameCompare(lhs.name, rhs.name, locale: locale)
+            if nameCompare != .orderedSame {
+                return nameCompare == .orderedAscending
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+
+        case .nameAscending:
+            let nameCompare = localizedCaseInsensitiveNameCompare(lhs.name, rhs.name, locale: locale)
+            if nameCompare != .orderedSame {
+                return nameCompare == .orderedAscending
+            }
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    return sorted
+}
+
+enum TemplateCategoryOperations {
+    static func renameCategory(templates: [PromptTemplate], from source: String, to destination: String) -> [PromptTemplate] {
+        let normalizedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedDestination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSource.isEmpty, !normalizedDestination.isEmpty else {
+            return templates
+        }
+
+        return templates.map { template in
+            guard template.category.caseInsensitiveCompare(normalizedSource) == .orderedSame else {
+                return template
+            }
+            var updated = template
+            updated.category = normalizedDestination
+            return updated
+        }
+    }
+
+    static func mergeCategory(templates: [PromptTemplate], source: String, destination: String) -> [PromptTemplate] {
+        renameCategory(templates: templates, from: source, to: destination)
+    }
+
+    static func deleteCategory(templates: [PromptTemplate], category: String) -> [PromptTemplate] {
+        let normalizedCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedCategory.isEmpty else {
+            return templates
+        }
+
+        return templates.map { template in
+            guard template.category.caseInsensitiveCompare(normalizedCategory) == .orderedSame else {
+                return template
+            }
+            var updated = template
+            updated.category = PromptTemplate.uncategorizedCategory
+            return updated
+        }
+    }
+}
+
+private func localizedCaseInsensitiveNameCompare(_ lhs: String, _ rhs: String, locale: Locale) -> ComparisonResult {
+    lhs.compare(
+        rhs,
+        options: [.caseInsensitive, .diacriticInsensitive],
+        range: nil,
+        locale: locale
+    )
 }

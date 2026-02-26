@@ -614,6 +614,73 @@ final class PromptEngineViewModelIntentTests: XCTestCase {
         XCTAssertTrue(activeCheck.passed)
     }
 
+    func testTemplateOverwriteConfirmationCancelPreservesOriginal() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.templateNameDraft = "My Template"
+        viewModel.templateCategoryDraft = "Planning"
+        viewModel.templateTagsDraft = "alpha,beta"
+        viewModel.selectedTarget = .claude
+        viewModel.roughInput = "Original content"
+        XCTAssertEqual(viewModel.saveCurrentAsTemplate(), .saved)
+
+        guard let original = viewModel.templates.first(where: { $0.name == "My Template" }) else {
+            return XCTFail("Expected saved template.")
+        }
+
+        viewModel.templateNameDraft = "my template"
+        viewModel.templateCategoryDraft = "Security"
+        viewModel.templateTagsDraft = "new-tag"
+        viewModel.selectedTarget = .perplexity
+        viewModel.roughInput = "Updated content"
+        XCTAssertEqual(viewModel.saveCurrentAsTemplate(), .requiresOverwriteConfirmation)
+        XCTAssertTrue(viewModel.isTemplateOverwriteConfirmationPresented)
+
+        viewModel.cancelTemplateOverwrite()
+
+        guard let afterCancel = viewModel.templates.first(where: { $0.id == original.id }) else {
+            return XCTFail("Expected template after cancel.")
+        }
+        XCTAssertEqual(afterCancel.content, "Original content")
+        XCTAssertEqual(afterCancel.target, .claude)
+        XCTAssertEqual(afterCancel.category, "Planning")
+        XCTAssertEqual(afterCancel.tags, ["alpha", "beta"])
+    }
+
+    func testTemplateOverwriteConfirmationConfirmUpdatesContentAndTargetOnly() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        viewModel.templateNameDraft = "My Template"
+        viewModel.templateCategoryDraft = "Planning"
+        viewModel.templateTagsDraft = "alpha,beta"
+        viewModel.selectedTarget = .claude
+        viewModel.roughInput = "Original content"
+        XCTAssertEqual(viewModel.saveCurrentAsTemplate(), .saved)
+
+        guard let original = viewModel.templates.first(where: { $0.name == "My Template" }) else {
+            return XCTFail("Expected saved template.")
+        }
+
+        viewModel.templateNameDraft = "MY TEMPLATE"
+        viewModel.templateCategoryDraft = "Security"
+        viewModel.templateTagsDraft = "new-tag"
+        viewModel.selectedTarget = .perplexity
+        viewModel.roughInput = "Updated content"
+        XCTAssertEqual(viewModel.saveCurrentAsTemplate(), .requiresOverwriteConfirmation)
+        viewModel.confirmTemplateOverwrite()
+
+        guard let overwritten = viewModel.templates.first(where: { $0.id == original.id }) else {
+            return XCTFail("Expected overwritten template.")
+        }
+        XCTAssertEqual(overwritten.content, "Updated content")
+        XCTAssertEqual(overwritten.target, .perplexity)
+        XCTAssertEqual(overwritten.category, "Planning")
+        XCTAssertEqual(overwritten.tags, ["alpha", "beta"])
+        XCTAssertGreaterThan(overwritten.updatedAt, original.updatedAt)
+    }
+
     private func makeInvalidModelFile() -> String {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dexcraft-invalid-model-\(UUID().uuidString).gguf")

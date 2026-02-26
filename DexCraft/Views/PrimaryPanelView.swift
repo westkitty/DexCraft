@@ -3,7 +3,6 @@ import SwiftUI
 struct PrimaryPanelView: View {
     @ObservedObject var viewModel: PromptEngineViewModel
 
-    @State private var isTemplateManagerPresented = false
     @State private var isHistoryManagerPresented = false
     @State private var isStructuredDraftExpanded = false
 
@@ -49,9 +48,6 @@ struct PrimaryPanelView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(isPresented: $isTemplateManagerPresented) {
-            TemplateManagerSheet(viewModel: viewModel)
-        }
         .sheet(isPresented: $isHistoryManagerPresented) {
             HistoryManagerSheet(viewModel: viewModel)
         }
@@ -411,35 +407,9 @@ struct PrimaryPanelView: View {
     }
 
     private var templatesTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(viewModel.templates.count) saved templates")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Open Template Manager") {
-                    isTemplateManagerPresented = true
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Menu("Quick Apply Template") {
-                ForEach(Array(viewModel.templates.prefix(12))) { template in
-                    Button(template.name) {
-                        viewModel.applyTemplate(template)
-                    }
-                }
-            }
-            .disabled(viewModel.templates.isEmpty)
-            .menuStyle(.borderlessButton)
-            .glassInset(cornerRadius: 8)
-
-            Text("Use the manager pop-up for full template editing and scrolling.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .glassCard()
+        TemplateManagerPanel(viewModel: viewModel)
+            .padding(10)
+            .glassCard()
     }
 
     private var historyTab: some View {
@@ -838,67 +808,406 @@ private struct PromptTagAssignmentSheet: View {
     }
 }
 
-private struct TemplateManagerSheet: View {
+private struct TemplateManagerPanel: View {
     @ObservedObject var viewModel: PromptEngineViewModel
-    @Environment(\.dismiss) private var dismiss
+    @State private var isCategoryFilterPopoverPresented = false
+    @State private var categoryFilterSearch: String = ""
+    @State private var isCategoryManagerPresented = false
+    @State private var metadataTemplate: PromptTemplate?
+
+    private var categoryFilterLabel: String {
+        viewModel.templateCategoryFilter ?? "All Categories"
+    }
+
+    private var targetFilterLabel: String {
+        viewModel.templateTargetFilter?.segmentTitle ?? "All Targets"
+    }
+
+    private var filteredCategoryOptions: [String] {
+        let query = categoryFilterSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else {
+            return viewModel.templateCategories
+        }
+
+        return viewModel.templateCategories.filter { category in
+            category.lowercased().contains(query)
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Template Manager")
-                    .font(.title3.weight(.semibold))
+                Text("Templates")
+                    .font(.headline)
                 Spacer()
-                Text("\(viewModel.templates.count) templates")
+                Text("\(viewModel.visibleTemplates.count) visible / \(viewModel.templates.count) total")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Close") {
-                    dismiss()
-                }
-                .buttonStyle(.bordered)
             }
 
+            saveControls
+            filterControls
+            templateList
+        }
+        .sheet(isPresented: $isCategoryManagerPresented) {
+            TemplateCategoryManagerSheet(viewModel: viewModel)
+        }
+        .sheet(item: $metadataTemplate) { template in
+            TemplateMetadataEditorSheet(viewModel: viewModel, template: template)
+        }
+        .alert("Overwrite existing template?", isPresented: $viewModel.isTemplateOverwriteConfirmationPresented) {
+            Button("Cancel", role: .cancel) {
+                viewModel.cancelTemplateOverwrite()
+            }
+            Button("Overwrite", role: .destructive) {
+                viewModel.confirmTemplateOverwrite()
+            }
+        } message: {
+            Text("A template named \"\(viewModel.templateOverwriteCandidateName)\" already exists. Overwrite content and target?")
+        }
+    }
+
+    private var saveControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 TextField("Template name", text: $viewModel.templateNameDraft)
                     .textFieldStyle(.roundedBorder)
+
+                Menu(viewModel.templateCategoryDraft) {
+                    ForEach(viewModel.templateCategories, id: \.self) { category in
+                        Button(category) {
+                            viewModel.templateCategoryDraft = category
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .glassInset(cornerRadius: 8)
+
+                TextField("Tags (comma-separated)", text: $viewModel.templateTagsDraft)
+                    .textFieldStyle(.roundedBorder)
+
                 Button("Save Current Input") {
-                    viewModel.saveCurrentAsTemplate()
+                    _ = viewModel.saveCurrentAsTemplate()
                 }
                 .buttonStyle(.borderedProminent)
             }
 
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(viewModel.templates) { template in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(template.name)
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text(template.target.segmentTitle)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("Import Defaults") {
+                    viewModel.importBundledDefaultTemplates()
+                }
+                .buttonStyle(.bordered)
+
+                Text("Import is idempotent and adds only missing template names.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var filterControls: some View {
+        HStack(spacing: 8) {
+            TextField("Search name, category, or tags", text: $viewModel.templateSearchQuery)
+                .textFieldStyle(.roundedBorder)
+
+            Button {
+                isCategoryFilterPopoverPresented = true
+            } label: {
+                Label(categoryFilterLabel, systemImage: "line.3.horizontal.decrease.circle")
+            }
+            .buttonStyle(.bordered)
+            .popover(isPresented: $isCategoryFilterPopoverPresented, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Search categories", text: $categoryFilterSearch)
+                        .textFieldStyle(.roundedBorder)
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Button("All Categories") {
+                                viewModel.templateCategoryFilter = nil
+                                isCategoryFilterPopoverPresented = false
                             }
-                            Spacer()
-                            Button("Load") {
-                                viewModel.applyTemplate(template)
-                                dismiss()
+                            .buttonStyle(.plain)
+
+                            ForEach(filteredCategoryOptions, id: \.self) { category in
+                                Button(category) {
+                                    viewModel.templateCategoryFilter = category
+                                    isCategoryFilterPopoverPresented = false
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.bordered)
-                            Button(role: .destructive) {
-                                viewModel.deleteTemplate(template)
-                            } label: {
-                                Image(systemName: "trash")
-                            }
-                            .buttonStyle(.borderless)
                         }
-                        .padding(10)
-                        .glassCard(cornerRadius: 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 180)
+
+                    Divider()
+                    Button("Manage Categories…") {
+                        isCategoryFilterPopoverPresented = false
+                        isCategoryManagerPresented = true
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(12)
+                .frame(width: 280)
+            }
+
+            Menu(targetFilterLabel) {
+                Button("All Targets") {
+                    viewModel.templateTargetFilter = nil
+                }
+                ForEach(PromptTarget.allCases) { target in
+                    Button(target.segmentTitle) {
+                        viewModel.templateTargetFilter = target
                     }
                 }
-                .padding(.vertical, 2)
+            }
+            .menuStyle(.borderlessButton)
+            .glassInset(cornerRadius: 8)
+
+            Menu(viewModel.templateSortOption.rawValue) {
+                ForEach(TemplateSortOption.allCases) { option in
+                    Button(option.rawValue) {
+                        viewModel.templateSortOption = option
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .glassInset(cornerRadius: 8)
+        }
+    }
+
+    private var templateList: some View {
+        List {
+            ForEach(viewModel.visibleTemplates) { template in
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(template.name)
+                            .font(.system(size: 13, weight: .semibold))
+
+                        Text("\(template.category) • \(template.target.segmentTitle)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        if !template.tags.isEmpty {
+                            Text(template.tags.joined(separator: ", "))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer(minLength: 8)
+
+                    HStack(spacing: 6) {
+                        Button("Apply") {
+                            viewModel.applyTemplate(template)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(role: .destructive) {
+                            viewModel.deleteTemplate(template)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+
+                        Menu {
+                            Button("Edit Metadata") {
+                                metadataTemplate = template
+                            }
+                            Button("Duplicate") {
+                                viewModel.duplicateTemplate(template)
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    viewModel.applyTemplate(template)
+                }
+            }
+        }
+        .frame(minHeight: 360, maxHeight: 560)
+    }
+}
+
+private struct TemplateCategoryManagerSheet: View {
+    @ObservedObject var viewModel: PromptEngineViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var renameSource: String = PromptTemplate.uncategorizedCategory
+    @State private var renameDestination: String = ""
+    @State private var mergeSource: String = PromptTemplate.uncategorizedCategory
+    @State private var mergeDestination: String = PromptTemplate.uncategorizedCategory
+    @State private var deleteCategoryName: String = PromptTemplate.uncategorizedCategory
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Manage Categories")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button("Close") { dismiss() }
+                    .buttonStyle(.bordered)
+            }
+
+            List(viewModel.templateCategories, id: \.self) { category in
+                HStack {
+                    Text(category)
+                    Spacer()
+                    Text("\(viewModel.templateCount(forCategory: category))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(minHeight: 180, maxHeight: 220)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Rename")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Picker("Source", selection: $renameSource) {
+                        ForEach(viewModel.templateCategories, id: \.self) { category in
+                            Text(category).tag(category)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    TextField("New name", text: $renameDestination)
+                        .textFieldStyle(.roundedBorder)
+
+                    Button("Rename") {
+                        viewModel.renameTemplateCategory(from: renameSource, to: renameDestination)
+                        renameDestination = ""
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Merge")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Picker("From", selection: $mergeSource) {
+                        ForEach(viewModel.templateCategories, id: \.self) { category in
+                            Text(category).tag(category)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Picker("Into", selection: $mergeDestination) {
+                        ForEach(viewModel.templateCategories, id: \.self) { category in
+                            Text(category).tag(category)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Button("Merge") {
+                        viewModel.mergeTemplateCategory(source: mergeSource, destination: mergeDestination)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Delete (reassigns templates to Uncategorized)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Picker("Category", selection: $deleteCategoryName) {
+                        ForEach(viewModel.templateCategories, id: \.self) { category in
+                            Text(category).tag(category)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Button("Delete", role: .destructive) {
+                        viewModel.deleteTemplateCategory(deleteCategoryName)
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .padding(16)
-        .frame(minWidth: 700, minHeight: 520)
+        .frame(minWidth: 620, minHeight: 520)
+        .background(Color.black.opacity(0.15))
+    }
+}
+
+private struct TemplateMetadataEditorSheet: View {
+    @ObservedObject var viewModel: PromptEngineViewModel
+    let template: PromptTemplate
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var category: String
+    @State private var tags: String
+    @State private var target: PromptTarget
+
+    init(viewModel: PromptEngineViewModel, template: PromptTemplate) {
+        self.viewModel = viewModel
+        self.template = template
+        _category = State(initialValue: template.category)
+        _tags = State(initialValue: template.tags.joined(separator: ", "))
+        _target = State(initialValue: template.target)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Edit Metadata")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button("Close") { dismiss() }
+                    .buttonStyle(.bordered)
+            }
+
+            Text(template.name)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextField("Category", text: $category)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("Tags (comma-separated)", text: $tags)
+                .textFieldStyle(.roundedBorder)
+
+            Picker("Target", selection: $target) {
+                ForEach(PromptTarget.allCases) { option in
+                    Text(option.segmentTitle).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                Button("Save") {
+                    let parsedTags = tags
+                        .replacingOccurrences(of: "\n", with: ",")
+                        .split(separator: ",")
+                        .map { String($0) }
+                    viewModel.updateTemplateMetadata(
+                        templateID: template.id,
+                        category: category,
+                        tags: parsedTags,
+                        target: target
+                    )
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 420, minHeight: 250)
         .background(Color.black.opacity(0.15))
     }
 }

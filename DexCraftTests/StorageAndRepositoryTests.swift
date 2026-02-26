@@ -107,4 +107,262 @@ final class StorageAndRepositoryTests: XCTestCase {
         _ = PromptLibraryRepository(storageBackend: backend, filename: filename)
         XCTAssertEqual(backend.saveCount, 0)
     }
+
+    func testTemplateMigrationDefaultsFromOldJSONFixture() throws {
+        let migrationFallback = ISO8601DateFormatter().date(from: "2025-01-01T00:00:00Z")!
+        let previousMigrationClock = PromptTemplate.migrationNow
+        PromptTemplate.migrationNow = { migrationFallback }
+        defer { PromptTemplate.migrationNow = previousMigrationClock }
+
+        let oldJSON = """
+        [
+          {
+            "id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+            "name": "Legacy One",
+            "content": "content",
+            "target": "Claude",
+            "createdAt": "2024-07-01T12:00:00Z"
+          },
+          {
+            "id": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+            "name": "Legacy Two",
+            "content": "content",
+            "target": "Perplexity",
+            "createdAt": "not-a-date"
+          }
+        ]
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([PromptTemplate].self, from: Data(oldJSON.utf8))
+
+        XCTAssertEqual(decoded.count, 2)
+        XCTAssertEqual(decoded[0].category, PromptTemplate.uncategorizedCategory)
+        XCTAssertEqual(decoded[0].tags, [])
+        XCTAssertEqual(decoded[0].updatedAt, decoded[0].createdAt)
+        XCTAssertEqual(decoded[1].createdAt, migrationFallback)
+        XCTAssertEqual(decoded[1].updatedAt, migrationFallback)
+    }
+
+    func testDeterministicFilteringComposesCategoryTargetAndSearch() {
+        let templates = [
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+                name: "Alpha Plan",
+                category: "Planning",
+                tags: ["security", "offline"],
+                target: .claude,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-02-01T00:00:00Z"
+            ),
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+                name: "Beta Checklist",
+                category: "Planning",
+                tags: ["network"],
+                target: .geminiChatGPT,
+                createdAt: "2024-01-02T00:00:00Z",
+                updatedAt: "2024-02-02T00:00:00Z"
+            ),
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+                name: "Security Audit",
+                category: "Security",
+                tags: ["planning"],
+                target: .claude,
+                createdAt: "2024-01-03T00:00:00Z",
+                updatedAt: "2024-02-03T00:00:00Z"
+            )
+        ]
+
+        let visible = computeVisibleTemplates(
+            templates: templates,
+            query: "security",
+            categoryFilter: "Planning",
+            targetFilter: .claude,
+            sort: .recentlyUpdated,
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+
+        XCTAssertEqual(visible.map(\.id.uuidString), ["00000000-0000-0000-0000-000000000001"])
+    }
+
+    func testDeterministicSortingUsesExpectedTieBreakers() {
+        let templates = [
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+                name: "Alpha",
+                category: "General",
+                tags: [],
+                target: .claude,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-03-01T00:00:00Z"
+            ),
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+                name: "Alpha",
+                category: "General",
+                tags: [],
+                target: .claude,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-03-01T00:00:00Z"
+            ),
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+                name: "Beta",
+                category: "General",
+                tags: [],
+                target: .claude,
+                createdAt: "2024-01-02T00:00:00Z",
+                updatedAt: "2024-02-28T00:00:00Z"
+            )
+        ]
+
+        let updatedOrder = computeVisibleTemplates(
+            templates: templates,
+            query: "",
+            categoryFilter: nil,
+            targetFilter: nil,
+            sort: .recentlyUpdated,
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+
+        XCTAssertEqual(
+            updatedOrder.map(\.id.uuidString),
+            [
+                "00000000-0000-0000-0000-000000000002",
+                "00000000-0000-0000-0000-000000000003",
+                "00000000-0000-0000-0000-000000000001"
+            ]
+        )
+
+        let nameOrder = computeVisibleTemplates(
+            templates: templates,
+            query: "",
+            categoryFilter: nil,
+            targetFilter: nil,
+            sort: .nameAscending,
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+        XCTAssertEqual(
+            nameOrder.map(\.id.uuidString),
+            [
+                "00000000-0000-0000-0000-000000000002",
+                "00000000-0000-0000-0000-000000000003",
+                "00000000-0000-0000-0000-000000000001"
+            ]
+        )
+    }
+
+    func testCategoryRenameMergeDeletePropagation() {
+        let seed = [
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!,
+                name: "One",
+                category: "Alpha",
+                tags: [],
+                target: .claude,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z"
+            ),
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000011")!,
+                name: "Two",
+                category: "Beta",
+                tags: [],
+                target: .claude,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z"
+            )
+        ]
+
+        let renamed = TemplateCategoryOperations.renameCategory(templates: seed, from: "Alpha", to: "Gamma")
+        XCTAssertEqual(renamed.first?.category, "Gamma")
+
+        let merged = TemplateCategoryOperations.mergeCategory(templates: renamed, source: "Beta", destination: "Gamma")
+        XCTAssertTrue(merged.allSatisfy { $0.category == "Gamma" })
+
+        let deleted = TemplateCategoryOperations.deleteCategory(templates: merged, category: "Gamma")
+        XCTAssertTrue(deleted.allSatisfy { $0.category == PromptTemplate.uncategorizedCategory })
+    }
+
+    func testImportDefaultsIsIdempotent() {
+        let (viewModel, cleanup) = makeViewModel()
+        defer { cleanup() }
+
+        for template in viewModel.templates {
+            viewModel.deleteTemplate(template)
+        }
+
+        let defaults = [
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!,
+                name: "Default A",
+                category: "Planning",
+                tags: ["one"],
+                target: .claude,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-02T00:00:00Z"
+            ),
+            makeTemplate(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000102")!,
+                name: "Default B",
+                category: "Testing",
+                tags: ["two"],
+                target: .geminiChatGPT,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-02T00:00:00Z"
+            )
+        ]
+
+        let firstImport = viewModel.importDefaultTemplates(defaults)
+        let secondImport = viewModel.importDefaultTemplates(defaults)
+
+        XCTAssertEqual(firstImport, 2)
+        XCTAssertEqual(secondImport, 0)
+    }
+
+    private func makeTemplate(
+        id: UUID,
+        name: String,
+        category: String,
+        tags: [String],
+        target: PromptTarget,
+        createdAt: String,
+        updatedAt: String
+    ) -> PromptTemplate {
+        let formatter = ISO8601DateFormatter()
+        let created = formatter.date(from: createdAt) ?? Date(timeIntervalSince1970: 0)
+        let updated = formatter.date(from: updatedAt) ?? created
+        return PromptTemplate(
+            id: id,
+            name: name,
+            content: "body",
+            target: target,
+            createdAt: created,
+            category: category,
+            tags: tags,
+            updatedAt: updated
+        )
+    }
+
+    private func makeViewModel() -> (PromptEngineViewModel, () -> Void) {
+        let folderName = "DexCraft-StorageTests-\(UUID().uuidString)"
+        let storageManager = StorageManager(appFolderName: folderName)
+        let repository = PromptLibraryRepository(storageBackend: InMemoryStorageBackend(), filename: "prompt-library-tests.json")
+        let viewModel = PromptEngineViewModel(
+            storageManager: storageManager,
+            promptLibraryRepository: repository
+        )
+
+        let cleanup = {
+            let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+            let folderURL = baseURL.appendingPathComponent(folderName, isDirectory: true)
+            try? FileManager.default.removeItem(at: folderURL)
+        }
+
+        return (viewModel, cleanup)
+    }
 }
